@@ -59,15 +59,15 @@ model → store → pipeline/* → scheduler → app/jobs → handler
 
 > 本文件由 agent 维护，每次 sprint 结束后更新。
 
-- [ ] 项目骨架初始化
-- [ ] model/job + model/task
-- [ ] store/job + store/task
+- [x] 项目骨架初始化
+- [x] model/job + model/task
+- [x] store/job + store/task
 - [ ] scheduler 最小骨架
 - [ ] pipeline/script executor
 - [ ] pipeline/tts executor
 - [ ] pipeline/image executor
 - [ ] pipeline/video executor
-- [ ] app/jobs + workflow builder
+- [x] app/jobs + workflow builder
 - [ ] handler 层
 - [ ] React 前端基础页面
 - [ ] 端到端集成测试

@@ -96,6 +96,7 @@ func TestScriptRun(t *testing.T) {
 - [ ] 创建 job 后可正确读取
 - [ ] 创建 task 后能按 job_id 查询
 - [ ] SQLite 下 job + task DAG 初始化事务行为正确
+- [ ] task 初始化失败时，job 与已插入 task 会整体回滚
 - [ ] 并发更新 task 状态不会破坏数据一致性
 - [ ] 相同测试集在 SQLite 和 MySQL 方言下语义一致
 

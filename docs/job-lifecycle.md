@@ -131,6 +131,13 @@ pending/ready -> skipped
 
 `app/jobs` 在创建 job 后，必须同步构建一组 task。
 
+当前最小实现约束：
+
+- `app/jobs.CreateJob(spec)` 负责规范化默认值
+- 使用固定 workflow builder 生成首版 task DAG
+- 通过 store 的原子接口一次性写入 `job + tasks`
+- 这一层只负责“入库并返回”，不负责真正调度执行
+
 MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬编码顺序调用。
 
 示例：

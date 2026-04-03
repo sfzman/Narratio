@@ -176,6 +176,7 @@ func Load() (*Config, error) {
 - `store` 层只暴露接口，不向上泄漏具体数据库实现
 - SQL 实现必须显式处理事务边界，尤其是 job 创建与 task DAG 创建
 - 能用单事务完成的 job/task 初始化，不允许拆成多次无保护写入
+- `app/jobs` 初始化 workflow 时，优先调用类似 `InitializeJob(job, tasks)` 的原子接口，不要在上层手写事务拼装
 - 查询接口优先返回领域对象，不把 `sql.Rows` 或驱动类型暴露到业务层
 
 ## 单函数长度限制
