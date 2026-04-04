@@ -44,6 +44,9 @@ func TestLoadRuntime(t *testing.T) {
 	if runtime.SchedulerService == nil {
 		t.Fatal("SchedulerService = nil")
 	}
+	if runtime.Router == nil {
+		t.Fatal("Router = nil")
+	}
 	if _, err := runtime.Store.GetJobByPublicID(context.Background(), "missing"); err == nil {
 		t.Fatal("GetJobByPublicID() error = nil, want missing row")
 	}

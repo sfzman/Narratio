@@ -173,6 +173,27 @@ Accept-Ranges: bytes
 
 ---
 
+### POST /api/v1/jobs/:job_id/dispatch-once — 开发态手动推进一次调度
+
+仅用于 skeleton / 开发调试阶段。每次请求最多推进一个 ready task。
+
+**Response 200**
+```json
+{
+  "code": 0,
+  "data": {
+    "job_id": "job_abc123",
+    "status": "queued",
+    "progress": 33,
+    "dispatched": true,
+    "executed_task_id": 11,
+    "executed_task_key": "outline"
+  }
+}
+```
+
+---
+
 ### GET /api/v1/voices — 获取可用音色列表
 
 **Response 200**
@@ -196,14 +217,26 @@ Accept-Ranges: bytes
 ```json
 {
   "status": "ok",
-  "version": "1.0.0",
+  "version": "dev",
   "services": {
-    "tts": "ok",
-    "qwen": "ok",
-    "ffmpeg": "ok"
+    "database": "ok",
+    "dashscope_text": "configured",
+    "tts": "not_configured"
   }
 }
 ```
+
+当前实现说明：
+
+- 当前 health 接口反映的是服务 bootstrap 结果和关键配置是否存在
+- 还没有对 DashScope、TTS、FFmpeg 做真实联通性探测
+
+当前实现说明：
+
+- `POST /api/v1/jobs` 已实现
+- `GET /api/v1/jobs/:job_id` 已实现，返回 job 状态和 task 聚合统计
+- `POST /api/v1/jobs/:job_id/dispatch-once` 已实现，仅用于开发态手动推进 task
+- `DELETE /api/v1/jobs/:job_id`、下载接口、音色列表接口尚未实现
 
 ---
 

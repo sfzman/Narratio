@@ -14,6 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	jobapp "github.com/sfzman/Narratio/backend/internal/app/jobs"
 	"github.com/sfzman/Narratio/backend/internal/config"
+	"github.com/sfzman/Narratio/backend/internal/handler"
 	"github.com/sfzman/Narratio/backend/internal/model"
 	scriptpipeline "github.com/sfzman/Narratio/backend/internal/pipeline/script"
 	"github.com/sfzman/Narratio/backend/internal/scheduler"
@@ -27,8 +28,10 @@ type Runtime struct {
 	TextClient       scriptpipeline.TextClient
 	ExecutorRegistry *scheduler.ExecutorRegistry
 	JobsService      *jobapp.Service
+	DispatchService  *jobapp.DispatchService
 	SchedulerService *scheduler.Service
 	ResourceManager  scheduler.ResourceManager
+	Router           http.Handler
 }
 
 func (r *Runtime) Close() error {
@@ -72,6 +75,15 @@ func LoadRuntime() (*Runtime, error) {
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
 	jobsService := jobapp.NewService(store)
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)
+	dispatchService := jobapp.NewDispatchService(store, schedulerService)
+	router := handler.NewRouter(jobsService, store, store, dispatchService, handler.HealthStatus{
+		Version: "dev",
+		Services: map[string]string{
+			"database":       "ok",
+			"dashscope_text": healthStatus(cfg.DashScopeTextAPIKey != ""),
+			"tts":            healthStatus(cfg.TTSAPIKey != ""),
+		},
+	})
 
 	slog.Info("runtime initialized",
 		"database_driver", cfg.DatabaseDriver,
@@ -87,8 +99,10 @@ func LoadRuntime() (*Runtime, error) {
 		TextClient:       textClient,
 		ExecutorRegistry: registry,
 		JobsService:      jobsService,
+		DispatchService:  dispatchService,
 		SchedulerService: schedulerService,
 		ResourceManager:  resourceManager,
+		Router:           router,
 	}, nil
 }
 
@@ -163,4 +177,12 @@ func defaultResourceLimits() map[model.ResourceKey]int {
 		model.ResourceImageGen:    2,
 		model.ResourceVideoRender: 1,
 	}
+}
+
+func healthStatus(ok bool) string {
+	if ok {
+		return "configured"
+	}
+
+	return "not_configured"
 }

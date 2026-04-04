@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,11 +23,23 @@ func main() {
 		"database_driver", runtime.Config.DatabaseDriver,
 	)
 
-	waitForSignal()
+	server := &http.Server{
+		Addr:    ":" + runtime.Config.Port,
+		Handler: runtime.Router,
+	}
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("http server failed", "error", err)
+		}
+	}()
+
+	waitForSignal(server)
 }
 
-func waitForSignal() {
+func waitForSignal(server *http.Server) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
+	_ = server.Close()
 }
