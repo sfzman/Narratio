@@ -184,6 +184,14 @@ const (
 3. task 结束后必须释放资源配额
 4. 调度器不关心具体 API，只关心 task 状态和资源占用
 
+当前最小实现约束：
+
+- scheduler 第一版先只负责 `pending -> ready` 判定
+- 再提供内存版 `ResourceManager` 做资源配额检查
+- 第二步增加“单次只 dispatch 一个 ready task”的同步执行入口
+- 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
+- 真正的并发 worker 和持续调度循环留到下一步
+
 ## 取消语义
 
 - `DELETE /jobs/:id` 作用于整个 job

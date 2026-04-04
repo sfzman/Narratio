@@ -62,7 +62,7 @@ model → store → pipeline/* → scheduler → app/jobs → handler
 - [x] 项目骨架初始化
 - [x] model/job + model/task
 - [x] store/job + store/task
-- [ ] scheduler 最小骨架
+- [x] scheduler 最小骨架
 - [ ] pipeline/script executor
 - [ ] pipeline/tts executor
 - [ ] pipeline/image executor
