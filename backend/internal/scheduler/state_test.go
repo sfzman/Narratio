@@ -164,13 +164,24 @@ func TestDispatchNextReadyTaskExecutesOneTask(t *testing.T) {
 
 	executed := make([]string, 0, 1)
 	registry := NewExecutorRegistry(map[model.TaskType]Executor{
-		model.TaskTypeOutline: executorFunc(func(_ context.Context, _ model.Job, task model.Task) error {
+		model.TaskTypeOutline: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
 			executed = append(executed, task.Key)
-			return nil
+			task.OutputRef = map[string]any{"status": "done"}
+			return task, nil
 		}),
-		model.TaskTypeScript: executorFunc(func(_ context.Context, _ model.Job, task model.Task) error {
+		model.TaskTypeScript: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
 			executed = append(executed, task.Key)
-			return nil
+			return task, nil
 		}),
 	})
 
@@ -195,6 +206,9 @@ func TestDispatchNextReadyTaskExecutesOneTask(t *testing.T) {
 	if result.Tasks[0].Status != model.TaskStatusSucceeded {
 		t.Fatalf("outline status = %q, want %q", result.Tasks[0].Status, model.TaskStatusSucceeded)
 	}
+	if result.Tasks[0].OutputRef["status"] != "done" {
+		t.Fatalf("outline output_ref = %#v, want status=done", result.Tasks[0].OutputRef)
+	}
 	if result.Tasks[1].Status != model.TaskStatusReady {
 		t.Fatalf("script status = %q, want %q", result.Tasks[1].Status, model.TaskStatusReady)
 	}
@@ -215,8 +229,13 @@ func TestDispatchNextReadyTaskMarksFailure(t *testing.T) {
 	}
 
 	registry := NewExecutorRegistry(map[model.TaskType]Executor{
-		model.TaskTypeImage: executorFunc(func(_ context.Context, _ model.Job, _ model.Task) error {
-			return errors.New("boom")
+		model.TaskTypeImage: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			return task, errors.New("boom")
 		}),
 	})
 
@@ -240,8 +259,18 @@ func TestDispatchNextReadyTaskMarksFailure(t *testing.T) {
 	}
 }
 
-type executorFunc func(ctx context.Context, job model.Job, task model.Task) error
+type executorFunc func(
+	ctx context.Context,
+	job model.Job,
+	task model.Task,
+	dependencies map[string]model.Task,
+) (model.Task, error)
 
-func (f executorFunc) Execute(ctx context.Context, job model.Job, task model.Task) error {
-	return f(ctx, job, task)
+func (f executorFunc) Execute(
+	ctx context.Context,
+	job model.Job,
+	task model.Task,
+	dependencies map[string]model.Task,
+) (model.Task, error) {
+	return f(ctx, job, task, dependencies)
 }

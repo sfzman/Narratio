@@ -266,7 +266,7 @@ type VideoOutput struct {
 ```go
 type Executor interface {
     Type() model.TaskType
-    Execute(ctx context.Context, task model.Task, job model.Job) (TaskResult, error)
+    Execute(ctx context.Context, task model.Task, job model.Job, dependencies map[string]model.Task) (model.Task, error)
 }
 ```
 
@@ -275,6 +275,8 @@ type Executor interface {
 - executor 只能处理自己负责的 task type
 - executor 不负责判断依赖是否满足
 - executor 不负责资源并发控制
+- `dependencies` 中只包含当前 task 声明的直接依赖 task
+- executor 通过返回更新后的 `task` 回写 `OutputRef` 等执行结果
 - executor 必须可被单元测试 mock
 
 ## Workspace 目录结构

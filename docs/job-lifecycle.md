@@ -190,6 +190,8 @@ const (
 - 再提供内存版 `ResourceManager` 做资源配额检查
 - 第二步增加“单次只 dispatch 一个 ready task”的同步执行入口
 - 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
+- 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
+- 当前 skeleton 已可让 script task 读取 outline / character_sheet 的依赖产物
 - 真正的并发 worker 和持续调度循环留到下一步
 
 ## 取消语义

@@ -70,11 +70,16 @@ go func() {
 ```go
 type Executor interface {
     Type() model.TaskType
-    Execute(ctx context.Context, task model.Task, job model.Job) (TaskResult, error)
+    Execute(ctx context.Context, task model.Task, job model.Job, dependencies map[string]model.Task) (model.Task, error)
 }
 ```
 
-好处：方便 scheduler 按 task type 派发，也便于测试时 mock。
+约束：
+
+- `dependencies` 由 scheduler 根据 `task.DependsOn` 提供，executor 不直接查数据库
+- 返回值中的 `task` 用于回写 `OutputRef`、`Attempt` 等执行产物
+- `scheduler` 负责最终状态迁移；executor 不直接持久化数据库
+- 便于测试时 mock
 
 ## HTTP Handler 规范
 
@@ -117,6 +122,13 @@ slog.Error("qwen image failed",
     "error", err,
 )
 ```
+
+日志级别约束：
+
+- `Debug`：调度细节、payload 规范化、无副作用的控制流信息
+- `Info`：任务创建成功、task 派发成功、阶段完成等正常业务事件
+- `Warn`：可恢复的降级、重试、回退路径
+- `Error`：请求失败、外部调用失败、状态持久化失败
 
 **不使用 `fmt.Println` 打日志。**
 

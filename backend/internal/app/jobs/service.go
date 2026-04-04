@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -25,12 +26,14 @@ func (realClock) Now() time.Time {
 type Service struct {
 	store store.WorkflowStore
 	clock Clock
+	log   *slog.Logger
 }
 
 func NewService(workflowStore store.WorkflowStore) *Service {
 	return &Service{
 		store: workflowStore,
 		clock: realClock{},
+		log:   slog.Default(),
 	}
 }
 
@@ -57,12 +60,27 @@ func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job,
 		UpdatedAt: now,
 	}
 
-	tasks := buildDefaultWorkflow(now)
+	tasks := buildDefaultWorkflow(normalized, now)
+	s.log.Debug("building default workflow",
+		"task_count", len(tasks),
+		"language", normalized.Language,
+		"voice_id", normalized.Options.VoiceID,
+		"image_style", normalized.Options.ImageStyle,
+	)
 	createdTasks, err := s.store.InitializeJob(ctx, &job, tasks)
 	if err != nil {
+		s.log.Error("initialize job workflow failed",
+			"job_public_id", publicID,
+			"error", err,
+		)
 		return model.Job{}, nil, fmt.Errorf("initialize job workflow: %w", err)
 	}
 
+	s.log.Info("job created",
+		"job_id", job.ID,
+		"job_public_id", job.PublicID,
+		"task_count", len(createdTasks),
+	)
 	return job, createdTasks, nil
 }
 
@@ -85,20 +103,70 @@ func normalizeSpec(spec model.JobSpec) model.JobSpec {
 	return spec
 }
 
-func buildDefaultWorkflow(now time.Time) []model.Task {
+func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 	return []model.Task{
-		newTask("outline", model.TaskTypeOutline, model.ResourceLLMText, nil, now),
-		newTask("character_sheet", model.TaskTypeCharacterSheet, model.ResourceLLMText, nil, now),
+		newTask(
+			"outline",
+			model.TaskTypeOutline,
+			model.ResourceLLMText,
+			nil,
+			map[string]any{
+				"article":  spec.Article,
+				"language": spec.Language,
+			},
+			now,
+		),
+		newTask(
+			"character_sheet",
+			model.TaskTypeCharacterSheet,
+			model.ResourceLLMText,
+			nil,
+			map[string]any{
+				"article":  spec.Article,
+				"language": spec.Language,
+			},
+			now,
+		),
 		newTask(
 			"script",
 			model.TaskTypeScript,
 			model.ResourceLLMText,
 			[]string{"outline", "character_sheet"},
+			map[string]any{
+				"article":  spec.Article,
+				"language": spec.Language,
+				"voice_id": spec.Options.VoiceID,
+			},
 			now,
 		),
-		newTask("tts", model.TaskTypeTTS, model.ResourceTTS, []string{"script"}, now),
-		newTask("image", model.TaskTypeImage, model.ResourceImageGen, []string{"script"}, now),
-		newTask("video", model.TaskTypeVideo, model.ResourceVideoRender, []string{"tts", "image"}, now),
+		newTask(
+			"tts",
+			model.TaskTypeTTS,
+			model.ResourceTTS,
+			[]string{"script"},
+			map[string]any{
+				"voice_id": spec.Options.VoiceID,
+			},
+			now,
+		),
+		newTask(
+			"image",
+			model.TaskTypeImage,
+			model.ResourceImageGen,
+			[]string{"script"},
+			map[string]any{
+				"image_style": spec.Options.ImageStyle,
+			},
+			now,
+		),
+		newTask(
+			"video",
+			model.TaskTypeVideo,
+			model.ResourceVideoRender,
+			[]string{"tts", "image"},
+			map[string]any{},
+			now,
+		),
 	}
 }
 
@@ -107,6 +175,7 @@ func newTask(
 	taskType model.TaskType,
 	resourceKey model.ResourceKey,
 	dependsOn []string,
+	payload map[string]any,
 	now time.Time,
 ) model.Task {
 	return model.Task{
@@ -117,7 +186,7 @@ func newTask(
 		DependsOn:   dependsOn,
 		Attempt:     0,
 		MaxAttempts: 1,
-		Payload:     map[string]any{},
+		Payload:     payload,
 		OutputRef:   map[string]any{},
 		CreatedAt:   now,
 		UpdatedAt:   now,

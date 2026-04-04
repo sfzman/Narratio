@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -24,6 +26,7 @@ type Service struct {
 	registry  *ExecutorRegistry
 	resources ResourceManager
 	clock     Clock
+	log       *slog.Logger
 }
 
 func NewService(
@@ -38,6 +41,7 @@ func NewService(
 		registry:  registry,
 		resources: resources,
 		clock:     realClock{},
+		log:       slog.Default(),
 	}
 }
 
@@ -45,24 +49,37 @@ func (s *Service) DispatchOnce(
 	ctx context.Context,
 	jobID int64,
 ) (DispatchResult, model.Job, error) {
+	s.log.Debug("dispatch once started", "job_id", jobID)
 	job, err := s.jobStore.GetJob(ctx, jobID)
 	if err != nil {
+		s.log.Error("load job for dispatch failed", "job_id", jobID, "error", err)
 		return DispatchResult{}, model.Job{}, err
 	}
 
 	tasks, err := s.taskStore.ListTasksByJob(ctx, jobID)
 	if err != nil {
+		s.log.Error("load tasks for dispatch failed", "job_id", jobID, "error", err)
 		return DispatchResult{}, model.Job{}, err
 	}
 
 	result, err := DispatchNextReadyTask(ctx, job, tasks, s.registry, s.resources)
 	if err != nil {
+		s.log.Error("dispatch next ready task failed",
+			"job_id", jobID,
+			"job_public_id", job.PublicID,
+			"error", err,
+		)
 		return DispatchResult{}, model.Job{}, err
 	}
 
 	now := s.clock.Now()
 	result.Tasks = applyTaskUpdates(tasks, result.Tasks, now)
 	if err := s.persistChangedTasks(ctx, tasks, result.Tasks); err != nil {
+		s.log.Error("persist task updates failed",
+			"job_id", jobID,
+			"job_public_id", job.PublicID,
+			"error", err,
+		)
 		return DispatchResult{}, model.Job{}, err
 	}
 
@@ -72,7 +89,30 @@ func (s *Service) DispatchOnce(
 	)
 	job.UpdatedAt = now
 	if err := s.jobStore.UpdateJob(ctx, job); err != nil {
+		s.log.Error("persist job state failed",
+			"job_id", jobID,
+			"job_public_id", job.PublicID,
+			"error", err,
+		)
 		return DispatchResult{}, model.Job{}, err
+	}
+
+	if result.Dispatched {
+		s.log.Info("task dispatched",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+			"task_id", result.ExecutedTaskID,
+			"task_key", result.ExecutedTaskKey,
+			"job_status", job.Status,
+			"progress", job.Progress,
+		)
+	} else {
+		s.log.Debug("no ready task dispatched",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+			"job_status", job.Status,
+			"progress", job.Progress,
+		)
 	}
 
 	return result, job, nil
@@ -117,6 +157,12 @@ func taskChanged(before model.Task, after model.Task) bool {
 		return true
 	}
 	if !taskErrorEqual(before.Error, after.Error) {
+		return true
+	}
+	if !reflect.DeepEqual(before.OutputRef, after.OutputRef) {
+		return true
+	}
+	if before.Attempt != after.Attempt {
 		return true
 	}
 

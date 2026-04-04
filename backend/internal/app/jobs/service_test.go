@@ -52,6 +52,15 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	if len(tasks) != 6 {
 		t.Fatalf("CreateJob() tasks len = %d, want 6", len(tasks))
 	}
+	if tasks[0].Payload["article"] != "hello world" {
+		t.Fatalf("CreateJob() outline payload article = %#v, want %#v", tasks[0].Payload["article"], "hello world")
+	}
+	if tasks[0].Payload["language"] != "zh" {
+		t.Fatalf("CreateJob() outline payload language = %#v, want %#v", tasks[0].Payload["language"], "zh")
+	}
+	if tasks[4].Payload["image_style"] != "realistic" {
+		t.Fatalf("CreateJob() image payload style = %#v, want %#v", tasks[4].Payload["image_style"], "realistic")
+	}
 
 	if tasks[2].Key != "script" {
 		t.Fatalf("CreateJob() task[2].Key = %q, want %q", tasks[2].Key, "script")
