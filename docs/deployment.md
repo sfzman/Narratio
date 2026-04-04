@@ -66,6 +66,13 @@ TTS_API_KEY=your-tts-key-here
 WORKSPACE_DIR=./workspace
 ```
 
+当前代码状态：
+
+- `cmd/server` 目前已完成配置读取、SQLite store 初始化、DashScope 文本 client 组装、script executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
+- SQLite 模式会在启动时自动执行首个 migration
+- 还没有真正启动 Gin HTTP server
+- 还没有启动 scheduler loop
+
 ## 项目结构（完整）
 
 ```
