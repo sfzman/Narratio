@@ -9,13 +9,13 @@
 
 ---
 
-## 1. Qwen 文本生成 API（脚本优化）
+## 1. DashScope 文本生成 API（OpenAI-compatible mode，脚本优化）
 
 **用途**：将原始文章分段，生成朗诵脚本和图像摘要
 
-**Endpoint**：由 `QWEN_TEXT_API_BASE_URL` 配置，不在代码中写死
+**Endpoint**：由 `DASHSCOPE_TEXT_BASE_URL` 配置，client 内部拼接 `/chat/completions`
 
-**认证**：`Authorization: Bearer ${QWEN_API_KEY}`
+**认证**：`Authorization: Bearer ${DASHSCOPE_TEXT_API_KEY}`
 
 **Model**：通过配置传入，MVP 固定单一模型，不允许 handler 覆盖
 
@@ -23,17 +23,25 @@
 ```go
 // 详见 internal/pipeline/script/client.go
 payload := map[string]any{
-    "model":      cfg.QwenTextModel,
+    "model": cfg.DashScopeTextModel,
+    "messages": []map[string]string{
+        {"role": "system", "content": "Respond with JSON only."},
+        {"role": "user", "content": buildPrompt(input)},
+    },
     "max_tokens": 4096,
-    "input": map[string]any{"prompt": buildPrompt(input)},
+    "response_format": map[string]string{
+        "type": "json_object",
+    },
 }
 ```
 
-**响应解析**：取 `content[0].text`，期望返回 JSON 格式（见 pipeline.md Stage 1）
+**响应解析**：取 `choices[0].message.content`，期望返回 JSON 格式（见 pipeline.md Stage 1）
 
 **超时**：30s  
 **重试**：2 次，退避 2s、4s  
 **限流**：无需客户端限流，依赖 API 本身的速率限制返回 429 时退避
+
+**当前实现状态**：当前仓库的 `script/client.go` 只完成 OpenAI-compatible wire format skeleton；retry/backoff 还未接入真实实现
 
 **错误码处理**
 
@@ -80,41 +88,40 @@ payload := map[string]any{
 
 ---
 
-## 3. Qwen 图像生成 API
+## 3. DashScope 图像生成 API（原生接口）
 
 **用途**：根据段落摘要生成配图
 
-**Endpoint**：`https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis`
+**Endpoint**：由 `DASHSCOPE_IMAGE_BASE_URL` 配置，走 DashScope 原生多模态接口；当前 POC 对应 Python SDK 的 `dashscope.MultiModalConversation.call(...)`
 
-**认证**：`Authorization: Bearer ${QWEN_API_KEY}`
+**认证**：`Authorization: Bearer ${DASHSCOPE_IMAGE_API_KEY}`
 
 **请求格式**
 ```json
 {
-  "model": "wanx2.1-t2i-turbo",
-  "input": {
-    "prompt": "图像描述文本",
-    "negative_prompt": "人物面部特写, 模糊, 低质量"
-  },
-  "parameters": {
-    "size": "1280*720",
-    "n": 1,
-    "style": "<from image_style>"
-  }
+  "model": "qwen-image",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"image": "https://example.com/reference-1.png"},
+        {"text": "图像描述文本"}
+      ]
+    }
+  ],
+  "result_format": "message",
+  "negative_prompt": "人物面部特写, 模糊, 低质量",
+  "size": "1280*720"
 }
 ```
 
-**响应**：异步任务模式
-1. 提交请求 → 获得 `task_id`
-2. 轮询 `GET /api/v1/tasks/{task_id}` 直到 `task_status == SUCCEEDED`
-3. 从结果中取图片 URL，下载到本地
+**响应**：同步返回 message 结构，从中提取图片 URL 后下载到本地
 
-**轮询间隔**：2s，最多等待 120s  
-**超时**：单个图片整体流程 120s  
+**超时**：单个图片请求 120s  
 **并发**：最大 2 个并发（图像生成 QPS 限制较低）
 
 **错误处理**
-- `task_status == FAILED`：取 `message` 字段写入 job warning，生成 fallback 图片，不阻断整体流程
+- 接口失败：取 `code/message` 写入 job warning，生成 fallback 图片，不阻断整体流程
 - 超时：同上，跳过该段并记录 warning
 
 **降级策略**：若某段图像生成失败，使用纯色背景图（1280x720，固定颜色 `#1a1a2e`）替代，不阻断视频合成。
@@ -156,16 +163,26 @@ ffmpeg -f concat -safe 0 -i segments.txt \
 # Claude
 CLAUDE_API_KEY=sk-ant-...
 
-# Qwen
-QWEN_API_KEY=sk-...
+# DashScope 文本（OpenAI-compatible mode）
+DASHSCOPE_TEXT_API_KEY=sk-...
+DASHSCOPE_TEXT_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
+DASHSCOPE_TEXT_MODEL=qwen-max
+
+# DashScope 图片（原生接口）
+DASHSCOPE_IMAGE_API_KEY=sk-...
+DASHSCOPE_IMAGE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+DASHSCOPE_IMAGE_MODEL=qwen-image-2.0
+
+# DashScope 视频（原生接口）
+DASHSCOPE_VIDEO_API_KEY=sk-...
+DASHSCOPE_VIDEO_BASE_URL=https://dashscope.aliyuncs.com
+DASHSCOPE_VIDEO_MODEL=wan2.6-i2v-flash
 
 # 自部署 TTS
 TTS_API_BASE_URL=https://your-tts-service.com
 TTS_API_KEY=your-key
 
 # 存储
-QWEN_TEXT_API_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_TEXT_MODEL=qwen-max
 WORKSPACE_DIR=/var/narratio/workspace
 
 # 服务

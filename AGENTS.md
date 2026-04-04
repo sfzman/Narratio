@@ -7,7 +7,7 @@
 
 - 后端：Go (Gin framework)
 - 前端：React + TypeScript (Vite)
-- 核心 AI 服务：Qwen 系列（文本/图像）、自部署 TTS
+- 核心 AI 服务：阿里云百炼（DashScope，承载 Qwen/Wan 模型）+ 自部署 TTS
 - 视频合成：FFmpeg
 
 ## 文档地图（先读这里，再读对应文档）

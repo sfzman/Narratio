@@ -1,0 +1,95 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+type Config struct {
+	Port                  string
+	DatabaseDriver        string
+	DatabaseDSN           string
+	DashScopeTextBaseURL  string
+	DashScopeTextModel    string
+	DashScopeTextAPIKey   string
+	DashScopeImageBaseURL string
+	DashScopeImageModel   string
+	DashScopeImageAPIKey  string
+	DashScopeVideoBaseURL string
+	DashScopeVideoModel   string
+	DashScopeVideoAPIKey  string
+	TTSBaseURL            string
+	TTSAPIKey             string
+	WorkspaceDir          string
+}
+
+func Load() (*Config, error) {
+	databaseDriver, err := requiredEnv("DATABASE_DRIVER")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateDatabaseDriver(databaseDriver); err != nil {
+		return nil, err
+	}
+
+	databaseDSN, err := requiredEnv("DATABASE_DSN")
+	if err != nil {
+		return nil, err
+	}
+	workspaceDir, err := requiredEnv("WORKSPACE_DIR")
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := &Config{
+		Port:                  envOrDefault("PORT", "8080"),
+		DatabaseDriver:        databaseDriver,
+		DatabaseDSN:           databaseDSN,
+		DashScopeTextBaseURL:  envOrDefault("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+		DashScopeTextModel:    envOrDefault("DASHSCOPE_TEXT_MODEL", "qwen-max"),
+		DashScopeTextAPIKey:   env("DASHSCOPE_TEXT_API_KEY"),
+		DashScopeImageBaseURL: envOrDefault("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
+		DashScopeImageModel:   envOrDefault("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0"),
+		DashScopeImageAPIKey:  env("DASHSCOPE_IMAGE_API_KEY"),
+		DashScopeVideoBaseURL: envOrDefault("DASHSCOPE_VIDEO_BASE_URL", "https://dashscope.aliyuncs.com"),
+		DashScopeVideoModel:   envOrDefault("DASHSCOPE_VIDEO_MODEL", "wan2.6-i2v-flash"),
+		DashScopeVideoAPIKey:  env("DASHSCOPE_VIDEO_API_KEY"),
+		TTSBaseURL:            env("TTS_API_BASE_URL"),
+		TTSAPIKey:             env("TTS_API_KEY"),
+		WorkspaceDir:          workspaceDir,
+	}
+
+	return cfg, nil
+}
+
+func validateDatabaseDriver(driver string) error {
+	switch driver {
+	case "sqlite", "mysql":
+		return nil
+	default:
+		return fmt.Errorf("DATABASE_DRIVER must be sqlite or mysql")
+	}
+}
+
+func requiredEnv(key string) (string, error) {
+	value := env(key)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", key)
+	}
+
+	return value, nil
+}
+
+func envOrDefault(key, fallback string) string {
+	value := env(key)
+	if value == "" {
+		return fallback
+	}
+
+	return value
+}
+
+func env(key string) string {
+	return strings.TrimSpace(os.Getenv(key))
+}

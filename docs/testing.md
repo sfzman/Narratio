@@ -3,7 +3,7 @@
 ## 原则
 
 - 每个 scheduler / store / executor 子模块必须有单元测试，覆盖率 > 70%
-- 外部 API 调用（Qwen 文本、Qwen 图像、TTS）一律使用 mock HTTP server
+- 外部 API 调用（DashScope 文本、DashScope 图像、TTS）一律使用 mock HTTP server
 - FFmpeg 调用使用 fixture 文件（不实际执行 ffmpeg）
 - 不允许测试依赖外网或本地服务
 - retry / polling 逻辑必须可注入时钟，测试中不得真实等待
@@ -25,7 +25,7 @@ internal/pipeline/script/
 
 ```go
 func TestScriptRun(t *testing.T) {
-    // 创建 mock Qwen 文本 API server
+    // 创建 mock DashScope 文本 API server
     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         // 验证请求
         assert.Equal(t, "POST", r.Method)
@@ -61,8 +61,8 @@ func TestScriptRun(t *testing.T) {
 
 ### pipeline/script
 - [ ] 正常请求，正确解析 segments
-- [ ] Qwen 文本接口返回 500，触发重试
-- [ ] Qwen 文本接口返回 429，触发退避重试
+- [ ] DashScope 文本接口返回 500，触发重试
+- [ ] DashScope 文本接口返回 429，触发退避重试
 - [ ] 返回非法 JSON，达到重试上限后返回 error
 - [ ] 文章超过 10000 字，自动截断
 

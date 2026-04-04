@@ -9,12 +9,23 @@ import (
 )
 
 type ScriptExecutor struct {
-	log *slog.Logger
+	log              *slog.Logger
+	textClient       TextClient
+	generationConfig TextGenerationConfig
 }
 
 func NewScriptExecutor() *ScriptExecutor {
+	return NewScriptExecutorWithClient(nil, TextGenerationConfig{})
+}
+
+func NewScriptExecutorWithClient(
+	textClient TextClient,
+	generationConfig TextGenerationConfig,
+) *ScriptExecutor {
 	return &ScriptExecutor{
-		log: slog.Default().With("executor", "script"),
+		log:              slog.Default().With("executor", "script"),
+		textClient:       textClient,
+		generationConfig: normalizeTextGenerationConfig(generationConfig),
 	}
 }
 
@@ -23,7 +34,7 @@ func (e *ScriptExecutor) Type() model.TaskType {
 }
 
 func (e *ScriptExecutor) Execute(
-	_ context.Context,
+	ctx context.Context,
 	job model.Job,
 	task model.Task,
 	dependencies map[string]model.Task,
@@ -41,6 +52,17 @@ func (e *ScriptExecutor) Execute(
 	}
 
 	voiceID, err := payloadString(task.Payload, "voice_id")
+	if err != nil {
+		e.log.Error("script payload invalid",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+			"task_id", task.ID,
+			"task_key", task.Key,
+			"error", err,
+		)
+		return task, err
+	}
+	language, err := payloadString(task.Payload, "language")
 	if err != nil {
 		e.log.Error("script payload invalid",
 			"job_id", job.ID,
@@ -69,6 +91,25 @@ func (e *ScriptExecutor) Execute(
 		"dependency_count", len(dependencies),
 	)
 
+	systemPrompt, userPrompt := buildScriptPrompts(article, language, voiceID, dependencies)
+	response, preview, err := generateTextPreview(
+		ctx,
+		e.textClient,
+		e.generationConfig,
+		systemPrompt,
+		userPrompt,
+	)
+	if err != nil {
+		e.log.Error("script text generation failed",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+			"task_id", task.ID,
+			"task_key", task.Key,
+			"error", err,
+		)
+		return task, err
+	}
+
 	task.OutputRef = map[string]any{
 		"artifact_type":        "script",
 		"artifact_path":        fmt.Sprintf("jobs/%s/script.json", job.PublicID),
@@ -78,6 +119,7 @@ func (e *ScriptExecutor) Execute(
 		"character_ref":        characterSheet.OutputRef["artifact_path"],
 		"segment_count":        1,
 	}
+	appendLLMMetadata(task.OutputRef, response, preview)
 
 	e.log.Info("script execution completed",
 		"job_id", job.ID,

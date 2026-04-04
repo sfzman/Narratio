@@ -124,7 +124,7 @@ type Segment struct {
 }
 ```
 
-**调用服务**：Qwen 文本生成 API（文本处理）  
+**调用服务**：DashScope 文本生成 API（OpenAI-compatible mode，承载 Qwen 文本模型）  
 **超时**：30s  
 **重试**：最多 2 次，指数退避  
 **Prompt 模板**：见 `internal/pipeline/script/prompt.go`
@@ -206,7 +206,7 @@ type GeneratedImage struct {
 }
 ```
 
-**调用服务**：Qwen 图像生成 API  
+**调用服务**：DashScope 图像生成 API（原生接口，承载图像模型）  
 **并发**：最大并发 2（图像生成耗时较长，避免超限）  
 **超时**：单个请求 120s  
 **重试**：最多 2 次  

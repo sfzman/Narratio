@@ -22,5 +22,5 @@
 
 - Backend: Go + Gin
 - Frontend: React + TypeScript + Vite
-- AI: Qwen 文本/图像 + 自部署 TTS
+- AI: DashScope 文本/图像/视频接口（承载 Qwen/Wan 模型）+ 自部署 TTS
 - Render: FFmpeg

@@ -48,9 +48,17 @@ GIN_MODE=debug
 DATABASE_DRIVER=sqlite
 DATABASE_DSN=./narratio.db
 
-QWEN_API_KEY=your-qwen-key-here
-QWEN_TEXT_API_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_TEXT_MODEL=qwen-max
+DASHSCOPE_TEXT_API_KEY=your-dashscope-text-key-here
+DASHSCOPE_TEXT_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
+DASHSCOPE_TEXT_MODEL=qwen-max
+
+DASHSCOPE_IMAGE_API_KEY=your-dashscope-image-key-here
+DASHSCOPE_IMAGE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+DASHSCOPE_IMAGE_MODEL=qwen-image-2.0
+
+DASHSCOPE_VIDEO_API_KEY=your-dashscope-video-key-here
+DASHSCOPE_VIDEO_BASE_URL=https://dashscope.aliyuncs.com
+DASHSCOPE_VIDEO_MODEL=wan2.6-i2v-flash
 
 TTS_API_BASE_URL=https://your-tts-service.com
 TTS_API_KEY=your-tts-key-here
@@ -129,7 +137,7 @@ coverage:
 4. `ffmpeg` 是否在 PATH 中
 5. Workspace 目录是否可写
 6. TTS 服务 `/health` 是否可达
-7. Qwen 文本与图像配置是否完整
+7. DashScope 文本 / 图像 / 视频配置是否完整
 
 任意检查失败，服务拒绝启动并打印明确错误信息。
 

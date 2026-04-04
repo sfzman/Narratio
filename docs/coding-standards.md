@@ -160,21 +160,33 @@ type ResourceManager interface {
 
 ```go
 type Config struct {
-    Port               string
-    DatabaseDriver     string
-    DatabaseDSN        string
-    QwenTextAPIBaseURL string
-    QwenTextModel      string
-    QwenAPIKey         string
-    TTSBaseURL         string
-    TTSAPIKey          string
-    WorkspaceDir       string
+    Port                 string
+    DatabaseDriver       string
+    DatabaseDSN          string
+    DashScopeTextBaseURL string
+    DashScopeTextModel   string
+    DashScopeTextAPIKey  string
+    DashScopeImageBaseURL string
+    DashScopeImageModel  string
+    DashScopeImageAPIKey string
+    DashScopeVideoBaseURL string
+    DashScopeVideoModel  string
+    DashScopeVideoAPIKey string
+    TTSBaseURL           string
+    TTSAPIKey            string
+    WorkspaceDir         string
 }
 
 func Load() (*Config, error) {
     // 使用 os.Getenv，缺少必填项时返回 error
 }
 ```
+
+约束：
+
+- `internal/pipeline/*` 不直接读取环境变量
+- 外部 API client 在 `cmd/server` 或更上层完成组装，再通过构造函数注入 executor
+- 不允许在 executor 内部自行 `os.Getenv(...)`
 
 数据库约束：
 
