@@ -23,17 +23,28 @@ func (realClock) Now() time.Time {
 	return time.Now().UTC()
 }
 
-type Service struct {
-	store store.WorkflowStore
-	clock Clock
-	log   *slog.Logger
+type JobRunner interface {
+	Enqueue(jobID int64)
 }
 
-func NewService(workflowStore store.WorkflowStore) *Service {
+type Service struct {
+	store  store.WorkflowStore
+	runner JobRunner
+	clock  Clock
+	log    *slog.Logger
+}
+
+func NewService(workflowStore store.WorkflowStore, runner ...JobRunner) *Service {
+	var jobRunner JobRunner
+	if len(runner) > 0 {
+		jobRunner = runner[0]
+	}
+
 	return &Service{
-		store: workflowStore,
-		clock: realClock{},
-		log:   slog.Default(),
+		store:  workflowStore,
+		runner: jobRunner,
+		clock:  realClock{},
+		log:    slog.Default(),
 	}
 }
 
@@ -81,6 +92,14 @@ func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job,
 		"job_public_id", job.PublicID,
 		"task_count", len(createdTasks),
 	)
+	if s.runner != nil {
+		s.runner.Enqueue(job.ID)
+		s.log.Info("job enqueued for background dispatch",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+		)
+	}
+
 	return job, createdTasks, nil
 }
 

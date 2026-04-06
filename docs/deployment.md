@@ -60,6 +60,7 @@ GIN_MODE=debug
 
 DATABASE_DRIVER=sqlite
 DATABASE_DSN=./narratio.db
+ENABLE_LIVE_TEXT_GENERATION=false
 
 DASHSCOPE_TEXT_API_KEY=your-dashscope-text-key-here
 DASHSCOPE_TEXT_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
@@ -81,10 +82,15 @@ WORKSPACE_DIR=./workspace
 
 当前代码状态：
 
-- `cmd/server` 目前已完成配置读取、SQLite store 初始化、DashScope 文本 client 组装、script executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
+- `cmd/server` 目前已完成配置读取、SQLite store 初始化、script/tts/image/video skeleton executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
 - 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health` 与 `POST /api/v1/jobs`
 - SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
-- 还没有启动 scheduler loop
+- 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
+
+注意：
+
+- 当前默认是 skeleton 模式，`ENABLE_LIVE_TEXT_GENERATION=false`
+- 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口
 
 ## 项目结构（完整）
 

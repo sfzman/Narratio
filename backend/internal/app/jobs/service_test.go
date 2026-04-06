@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,18 @@ import (
 	"github.com/sfzman/Narratio/backend/internal/model"
 	sqlstore "github.com/sfzman/Narratio/backend/internal/store/sql"
 )
+
+type fakeJobRunner struct {
+	mu     sync.Mutex
+	jobIDs []int64
+}
+
+func (f *fakeJobRunner) Enqueue(jobID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.jobIDs = append(f.jobIDs, jobID)
+}
 
 func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	t.Parallel()
@@ -89,6 +102,34 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	}
 	if len(persistedTasks) != 6 {
 		t.Fatalf("persisted tasks len = %d, want 6", len(persistedTasks))
+	}
+}
+
+func TestCreateJobEnqueuesBackgroundDispatch(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	runner := &fakeJobRunner{}
+	service := NewService(store, runner)
+	service.clock = fixedClock{now: time.Date(2026, 4, 6, 20, 0, 0, 0, time.UTC)}
+
+	job, _, err := service.CreateJob(context.Background(), model.JobSpec{
+		Article:  "hello world",
+		Language: "zh",
+		Options: model.RenderOptions{
+			VoiceID:    "default",
+			ImageStyle: "realistic",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+
+	if len(runner.jobIDs) != 1 {
+		t.Fatalf("runner enqueued len = %d, want 1", len(runner.jobIDs))
+	}
+	if runner.jobIDs[0] != job.ID {
+		t.Fatalf("runner enqueued job id = %d, want %d", runner.jobIDs[0], job.ID)
 	}
 }
 

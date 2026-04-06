@@ -9,21 +9,22 @@ import (
 )
 
 type Config struct {
-	Port                  string
-	DatabaseDriver        string
-	DatabaseDSN           string
-	DashScopeTextBaseURL  string
-	DashScopeTextModel    string
-	DashScopeTextAPIKey   string
-	DashScopeImageBaseURL string
-	DashScopeImageModel   string
-	DashScopeImageAPIKey  string
-	DashScopeVideoBaseURL string
-	DashScopeVideoModel   string
-	DashScopeVideoAPIKey  string
-	TTSBaseURL            string
-	TTSAPIKey             string
-	WorkspaceDir          string
+	Port                     string
+	DatabaseDriver           string
+	DatabaseDSN              string
+	EnableLiveTextGeneration bool
+	DashScopeTextBaseURL     string
+	DashScopeTextModel       string
+	DashScopeTextAPIKey      string
+	DashScopeImageBaseURL    string
+	DashScopeImageModel      string
+	DashScopeImageAPIKey     string
+	DashScopeVideoBaseURL    string
+	DashScopeVideoModel      string
+	DashScopeVideoAPIKey     string
+	TTSBaseURL               string
+	TTSAPIKey                string
+	WorkspaceDir             string
 }
 
 func Load() (*Config, error) {
@@ -49,21 +50,22 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:                  envOrDefault("PORT", "8080"),
-		DatabaseDriver:        databaseDriver,
-		DatabaseDSN:           databaseDSN,
-		DashScopeTextBaseURL:  envOrDefault("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-		DashScopeTextModel:    envOrDefault("DASHSCOPE_TEXT_MODEL", "qwen-max"),
-		DashScopeTextAPIKey:   env("DASHSCOPE_TEXT_API_KEY"),
-		DashScopeImageBaseURL: envOrDefault("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
-		DashScopeImageModel:   envOrDefault("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0"),
-		DashScopeImageAPIKey:  env("DASHSCOPE_IMAGE_API_KEY"),
-		DashScopeVideoBaseURL: envOrDefault("DASHSCOPE_VIDEO_BASE_URL", "https://dashscope.aliyuncs.com"),
-		DashScopeVideoModel:   envOrDefault("DASHSCOPE_VIDEO_MODEL", "wan2.6-i2v-flash"),
-		DashScopeVideoAPIKey:  env("DASHSCOPE_VIDEO_API_KEY"),
-		TTSBaseURL:            env("TTS_API_BASE_URL"),
-		TTSAPIKey:             env("TTS_API_KEY"),
-		WorkspaceDir:          workspaceDir,
+		Port:                     envOrDefault("PORT", "8080"),
+		DatabaseDriver:           databaseDriver,
+		DatabaseDSN:              databaseDSN,
+		EnableLiveTextGeneration: envAsBool("ENABLE_LIVE_TEXT_GENERATION"),
+		DashScopeTextBaseURL:     envOrDefault("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+		DashScopeTextModel:       envOrDefault("DASHSCOPE_TEXT_MODEL", "qwen-max"),
+		DashScopeTextAPIKey:      env("DASHSCOPE_TEXT_API_KEY"),
+		DashScopeImageBaseURL:    envOrDefault("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
+		DashScopeImageModel:      envOrDefault("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0"),
+		DashScopeImageAPIKey:     env("DASHSCOPE_IMAGE_API_KEY"),
+		DashScopeVideoBaseURL:    envOrDefault("DASHSCOPE_VIDEO_BASE_URL", "https://dashscope.aliyuncs.com"),
+		DashScopeVideoModel:      envOrDefault("DASHSCOPE_VIDEO_MODEL", "wan2.6-i2v-flash"),
+		DashScopeVideoAPIKey:     env("DASHSCOPE_VIDEO_API_KEY"),
+		TTSBaseURL:               env("TTS_API_BASE_URL"),
+		TTSAPIKey:                env("TTS_API_KEY"),
+		WorkspaceDir:             workspaceDir,
 	}
 
 	return cfg, nil
@@ -98,6 +100,16 @@ func envOrDefault(key, fallback string) string {
 
 func env(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
+}
+
+func envAsBool(key string) bool {
+	value := strings.ToLower(env(key))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func loadDotEnvCandidates(paths ...string) error {

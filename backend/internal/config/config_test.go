@@ -11,6 +11,7 @@ var narratioEnvKeys = []string{
 	"DATABASE_DRIVER",
 	"DATABASE_DSN",
 	"WORKSPACE_DIR",
+	"ENABLE_LIVE_TEXT_GENERATION",
 	"DASHSCOPE_TEXT_API_KEY",
 	"DASHSCOPE_TEXT_BASE_URL",
 	"DASHSCOPE_TEXT_MODEL",
@@ -37,6 +38,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.Port != "8080" {
 		t.Fatalf("Port = %q", cfg.Port)
 	}
+	if cfg.EnableLiveTextGeneration {
+		t.Fatal("EnableLiveTextGeneration = true, want false by default")
+	}
 	if cfg.DashScopeTextBaseURL != "https://coding.dashscope.aliyuncs.com/v1" {
 		t.Fatalf("DashScopeTextBaseURL = %q", cfg.DashScopeTextBaseURL)
 	}
@@ -45,6 +49,22 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.DashScopeVideoModel != "wan2.6-i2v-flash" {
 		t.Fatalf("DashScopeVideoModel = %q", cfg.DashScopeVideoModel)
+	}
+}
+
+func TestLoadReadsLiveTextGenerationFlag(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("ENABLE_LIVE_TEXT_GENERATION", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.EnableLiveTextGeneration {
+		t.Fatal("EnableLiveTextGeneration = false, want true")
 	}
 }
 

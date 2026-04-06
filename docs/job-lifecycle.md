@@ -136,7 +136,8 @@ pending/ready -> skipped
 - `app/jobs.CreateJob(spec)` 负责规范化默认值
 - 使用固定 workflow builder 生成首版 task DAG
 - 通过 store 的原子接口一次性写入 `job + tasks`
-- 这一层只负责“入库并返回”，不负责真正调度执行
+- 当前实现会在入库成功后把 `job.ID` 投递给后台 runner
+- 后台 runner 串行调用 `scheduler.DispatchOnce(jobID)`，直到 job 进入终态或当前没有 ready task
 
 MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬编码顺序调用。
 
@@ -192,7 +193,8 @@ const (
 - 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
 - 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
 - 当前 skeleton 已可让 script task 读取 outline / character_sheet 的依赖产物
-- 真正的并发 worker 和持续调度循环留到下一步
+- 当前最小后台 runner 已接入，默认会在 job 创建后自动持续推进
+- `POST /jobs/:id/dispatch-once` 仍保留为开发态接口；若同一 job 已在后台运行，该接口返回 no-op
 
 ## 取消语义
 

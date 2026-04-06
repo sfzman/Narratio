@@ -31,8 +31,8 @@ func TestLoadRuntime(t *testing.T) {
 	if runtime.Config.DashScopeTextModel != "qwen-max" {
 		t.Fatalf("DashScopeTextModel = %q", runtime.Config.DashScopeTextModel)
 	}
-	if runtime.TextClient == nil {
-		t.Fatal("TextClient = nil")
+	if runtime.TextClient != nil {
+		t.Fatal("TextClient != nil, want skeleton default")
 	}
 	if runtime.ExecutorRegistry == nil {
 		t.Fatal("ExecutorRegistry = nil")
@@ -52,6 +52,12 @@ func TestLoadRuntime(t *testing.T) {
 	if runtime.JobsService == nil {
 		t.Fatal("JobsService = nil")
 	}
+	if runtime.BackgroundRunner == nil {
+		t.Fatal("BackgroundRunner = nil")
+	}
+	if runtime.RunCoordinator == nil {
+		t.Fatal("RunCoordinator = nil")
+	}
 	if runtime.SchedulerService == nil {
 		t.Fatal("SchedulerService = nil")
 	}
@@ -60,5 +66,31 @@ func TestLoadRuntime(t *testing.T) {
 	}
 	if _, err := runtime.Store.GetJobByPublicID(context.Background(), "missing"); err == nil {
 		t.Fatal("GetJobByPublicID() error = nil, want missing row")
+	}
+}
+
+func TestLoadRuntimeBuildsTextClientWhenEnabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "narratio-live.db")
+
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", dbPath)
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("ENABLE_LIVE_TEXT_GENERATION", "true")
+	t.Setenv("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1")
+	t.Setenv("DASHSCOPE_TEXT_API_KEY", "test-key")
+	t.Setenv("DASHSCOPE_TEXT_MODEL", "qwen-max")
+
+	runtime, err := LoadRuntime()
+	if err != nil {
+		t.Fatalf("LoadRuntime() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runtime.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	if runtime.TextClient == nil {
+		t.Fatal("TextClient = nil, want live client when enabled")
 	}
 }

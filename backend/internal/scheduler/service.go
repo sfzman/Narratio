@@ -20,6 +20,8 @@ func (realClock) Now() time.Time {
 	return time.Now().UTC()
 }
 
+const persistenceTimeout = 5 * time.Second
+
 type Service struct {
 	jobStore  store.JobStore
 	taskStore store.TaskStore
@@ -74,7 +76,9 @@ func (s *Service) DispatchOnce(
 
 	now := s.clock.Now()
 	result.Tasks = applyTaskUpdates(tasks, result.Tasks, now)
-	if err := s.persistChangedTasks(ctx, tasks, result.Tasks); err != nil {
+	persistCtx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	if err := s.persistChangedTasks(persistCtx, tasks, result.Tasks); err != nil {
 		s.log.Error("persist task updates failed",
 			"job_id", jobID,
 			"job_public_id", job.PublicID,
@@ -89,7 +93,7 @@ func (s *Service) DispatchOnce(
 	)
 	job.Result = buildJobResult(result.Tasks)
 	job.UpdatedAt = now
-	if err := s.jobStore.UpdateJob(ctx, job); err != nil {
+	if err := s.jobStore.UpdateJob(persistCtx, job); err != nil {
 		s.log.Error("persist job state failed",
 			"job_id", jobID,
 			"job_public_id", job.PublicID,

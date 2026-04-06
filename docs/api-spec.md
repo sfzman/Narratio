@@ -78,6 +78,11 @@
 }
 ```
 
+**行为说明**
+
+- 当前实现会在创建成功后自动启动后台调度
+- 前端不需要再依赖手动点击 `Dispatch Once` 才能推进 job
+
 ---
 
 ### GET /api/v1/jobs/:job_id — 查询任务状态
@@ -107,7 +112,7 @@
       "running_keys": [],
       "failed_keys": []
     },
-    "runtime_hint": "当前有 ready task，但 skeleton 模式没有后台自动调度。请继续点击 Dispatch Once。",
+    "runtime_hint": "当前 job 正由后台 runner 自动推进，可继续刷新查看进展。",
     "warnings": [],
     "error": null,
     "result": null
@@ -126,7 +131,7 @@
 **task_state / runtime_hint 字段说明**：
 
 - `task_state` 返回当前 ready / running / failed 的 task key 快照，方便前端判断工作流停在哪
-- `runtime_hint` 是 skeleton 阶段的人类可读提示，用于解释“为什么现在没有 running task”
+- `runtime_hint` 是 skeleton 阶段的人类可读提示，用于解释当前是否由后台 runner 自动推进，或为什么现在没有 running task
 
 **progress**：0~100 的整数，表示整体进度百分比
 
@@ -233,10 +238,14 @@ Accept-Ranges: bytes
     "progress": 33,
     "dispatched": true,
     "executed_task_id": 11,
-    "executed_task_key": "outline"
+	"executed_task_key": "outline"
   }
 }
 ```
+
+补充语义：
+
+- 若该 job 当前已被后台 runner 持有，本接口返回 `dispatched=false`
 
 ---
 

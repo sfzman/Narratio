@@ -30,6 +30,8 @@ type Runtime struct {
 	Store            *sqlstore.Store
 	TextClient       scriptpipeline.TextClient
 	ExecutorRegistry *scheduler.ExecutorRegistry
+	RunCoordinator   *jobapp.RunCoordinator
+	BackgroundRunner *jobapp.BackgroundRunner
 	JobsService      *jobapp.Service
 	DispatchService  *jobapp.DispatchService
 	SchedulerService *scheduler.Service
@@ -38,7 +40,15 @@ type Runtime struct {
 }
 
 func (r *Runtime) Close() error {
-	if r == nil || r.DB == nil {
+	if r == nil {
+		return nil
+	}
+	if r.BackgroundRunner != nil {
+		if err := r.BackgroundRunner.Close(); err != nil {
+			return err
+		}
+	}
+	if r.DB == nil {
 		return nil
 	}
 
@@ -56,14 +66,10 @@ func LoadRuntime() (*Runtime, error) {
 		return nil, err
 	}
 
-	textClient, err := scriptpipeline.NewHTTPTextClient(
-		cfg.DashScopeTextBaseURL,
-		cfg.DashScopeTextAPIKey,
-		&http.Client{Timeout: 600 * time.Second},
-	)
+	textClient, err := buildTextClient(cfg)
 	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("build dashscope text client: %w", err)
+		return nil, err
 	}
 
 	textGenerationConfig := scriptpipeline.TextGenerationConfig{
@@ -79,14 +85,16 @@ func LoadRuntime() (*Runtime, error) {
 		model.TaskTypeVideo:          videopipeline.NewExecutor(),
 	})
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
-	jobsService := jobapp.NewService(store)
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)
-	dispatchService := jobapp.NewDispatchService(store, schedulerService)
+	runCoordinator := jobapp.NewRunCoordinator()
+	backgroundRunner := jobapp.NewBackgroundRunner(schedulerService, runCoordinator)
+	jobsService := jobapp.NewService(store, backgroundRunner)
+	dispatchService := jobapp.NewDispatchService(store, schedulerService, runCoordinator)
 	router := handler.NewRouter(jobsService, store, store, dispatchService, handler.HealthStatus{
 		Version: "dev",
 		Services: map[string]string{
 			"database":        "ok",
-			"dashscope_text":  healthStatus(cfg.DashScopeTextAPIKey != ""),
+			"dashscope_text":  textHealthStatus(cfg),
 			"dashscope_image": healthStatus(cfg.DashScopeImageAPIKey != ""),
 			"tts":             healthStatus(cfg.TTSAPIKey != ""),
 		},
@@ -95,6 +103,7 @@ func LoadRuntime() (*Runtime, error) {
 	slog.Info("runtime initialized",
 		"database_driver", cfg.DatabaseDriver,
 		"database_dsn", cfg.DatabaseDSN,
+		"live_text_generation", cfg.EnableLiveTextGeneration,
 		"dashscope_text_base_url", cfg.DashScopeTextBaseURL,
 		"dashscope_text_model", cfg.DashScopeTextModel,
 	)
@@ -105,6 +114,8 @@ func LoadRuntime() (*Runtime, error) {
 		Store:            store,
 		TextClient:       textClient,
 		ExecutorRegistry: registry,
+		RunCoordinator:   runCoordinator,
+		BackgroundRunner: backgroundRunner,
 		JobsService:      jobsService,
 		DispatchService:  dispatchService,
 		SchedulerService: schedulerService,
@@ -192,4 +203,35 @@ func healthStatus(ok bool) string {
 	}
 
 	return "not_configured"
+}
+
+func textHealthStatus(cfg *config.Config) string {
+	if cfg.DashScopeTextAPIKey == "" {
+		return "not_configured"
+	}
+	if !cfg.EnableLiveTextGeneration {
+		return "configured_but_disabled"
+	}
+
+	return "configured"
+}
+
+func buildTextClient(cfg *config.Config) (scriptpipeline.TextClient, error) {
+	if !cfg.EnableLiveTextGeneration {
+		return nil, nil
+	}
+	if cfg.DashScopeTextAPIKey == "" {
+		return nil, nil
+	}
+
+	client, err := scriptpipeline.NewHTTPTextClient(
+		cfg.DashScopeTextBaseURL,
+		cfg.DashScopeTextAPIKey,
+		&http.Client{Timeout: 600 * time.Second},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build dashscope text client: %w", err)
+	}
+
+	return client, nil
 }

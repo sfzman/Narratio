@@ -548,6 +548,92 @@ func TestDispatchOnceExecutesVideoAndPersistsJobResult(t *testing.T) {
 	}
 }
 
+func TestDispatchOncePersistsFailedTaskAfterExecutionContextTimeout(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 6, 11, 30, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_timeout",
+		Token:     "job_token_scheduler_timeout",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	createdTasks, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "outline",
+			Type:        model.TaskTypeOutline,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"article":  "story",
+				"language": "zh",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeOutline: timeoutExecutor{},
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceLLMText: 1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	_, updatedJob, err := service.DispatchOnce(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+	if updatedJob.Status != model.JobStatusFailed {
+		t.Fatalf("job status = %q, want %q", updatedJob.Status, model.JobStatusFailed)
+	}
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if len(persistedTasks) != len(createdTasks) {
+		t.Fatalf("task len = %d, want %d", len(persistedTasks), len(createdTasks))
+	}
+	if persistedTasks[0].Status != model.TaskStatusFailed {
+		t.Fatalf("task status = %q, want %q", persistedTasks[0].Status, model.TaskStatusFailed)
+	}
+	if persistedTasks[0].Error == nil {
+		t.Fatal("task error = nil, want persisted error")
+	}
+}
+
+type timeoutExecutor struct{}
+
+func (timeoutExecutor) Execute(
+	_ context.Context,
+	_ model.Job,
+	task model.Task,
+	_ map[string]model.Task,
+) (model.Task, error) {
+	return task, context.DeadlineExceeded
+}
+
 type fixedSchedulerClock struct {
 	now time.Time
 }

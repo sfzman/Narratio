@@ -23,15 +23,23 @@ type DispatchOutcome struct {
 type DispatchService struct {
 	jobStore  store.JobStore
 	scheduler SchedulerDispatcher
+	coord     *RunCoordinator
 }
 
 func NewDispatchService(
 	jobStore store.JobStore,
 	schedulerDispatcher SchedulerDispatcher,
+	coord ...*RunCoordinator,
 ) *DispatchService {
+	var coordinator *RunCoordinator
+	if len(coord) > 0 {
+		coordinator = coord[0]
+	}
+
 	return &DispatchService{
 		jobStore:  jobStore,
 		scheduler: schedulerDispatcher,
+		coord:     coordinator,
 	}
 }
 
@@ -42,6 +50,15 @@ func (s *DispatchService) DispatchOnce(
 	job, err := s.jobStore.GetJobByPublicID(ctx, publicID)
 	if err != nil {
 		return DispatchOutcome{}, fmt.Errorf("get job by public id: %w", err)
+	}
+	if s.coord != nil && !s.coord.TryAcquire(job.ID) {
+		return DispatchOutcome{
+			Job:        job,
+			Dispatched: false,
+		}, nil
+	}
+	if s.coord != nil {
+		defer s.coord.Release(job.ID)
 	}
 
 	result, updatedJob, err := s.scheduler.DispatchOnce(ctx, job.ID)

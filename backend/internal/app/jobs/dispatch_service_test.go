@@ -65,3 +65,29 @@ func TestDispatchServiceDispatchOnce(t *testing.T) {
 		t.Fatalf("ExecutedTaskKey = %q", outcome.ExecutedTaskKey)
 	}
 }
+
+func TestDispatchServiceReturnsNoopWhenJobAlreadyRunning(t *testing.T) {
+	coord := NewRunCoordinator()
+	if !coord.TryAcquire(7) {
+		t.Fatal("TryAcquire(7) = false, want true")
+	}
+
+	service := NewDispatchService(
+		&fakeDispatchJobStore{
+			job: model.Job{ID: 7, PublicID: "job_abc123", Status: model.JobStatusRunning},
+		},
+		&fakeSchedulerDispatcher{},
+		coord,
+	)
+
+	outcome, err := service.DispatchOnce(context.Background(), "job_abc123")
+	if err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+	if outcome.Dispatched {
+		t.Fatal("Dispatched = true, want false")
+	}
+	if outcome.Job.PublicID != "job_abc123" {
+		t.Fatalf("Job.PublicID = %q", outcome.Job.PublicID)
+	}
+}
