@@ -1,0 +1,377 @@
+:root {
+  color: #f2efe8;
+  background:
+    radial-gradient(circle at top left, rgba(255, 147, 79, 0.24), transparent 28%),
+    radial-gradient(circle at right 20%, rgba(64, 159, 255, 0.16), transparent 24%),
+    linear-gradient(180deg, #171717 0%, #0d0d0d 100%);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0.8rem 1.2rem;
+  background: #2e2e2e;
+  color: #f2efe8;
+  transition:
+    transform 150ms ease,
+    background 150ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  background: #3b3b3b;
+}
+
+.primary-button {
+  background: linear-gradient(90deg, #ef6c33, #ff9955);
+  color: #1b140f;
+  font-weight: 700;
+}
+
+.accent-button {
+  background: linear-gradient(90deg, #59bfd9, #88f0ea);
+  color: #082025;
+  font-weight: 700;
+}
+
+.app-shell {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+}
+
+.hero {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1.5fr 1fr;
+  align-items: end;
+  margin-bottom: 1.5rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #ffb48d;
+  font-size: 0.8rem;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 0.95;
+}
+
+.hero-copy {
+  margin: 0.85rem 0 0;
+  max-width: 44rem;
+  color: #cbc3b7;
+}
+
+.health-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 1rem 1.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+}
+
+.health-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #8ac0d6;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 28px;
+  background: rgba(14, 14, 14, 0.82);
+  padding: 1.2rem;
+  backdrop-filter: blur(12px);
+}
+
+.panel-form {
+  grid-column: span 7;
+}
+
+.panel-actions {
+  grid-column: span 5;
+}
+
+.panel-job,
+.panel-tasks,
+.panel-logs {
+  grid-column: span 4;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.panel-head span {
+  color: #b0a697;
+  font-size: 0.9rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+.field span {
+  color: #d8cdbd;
+  font-size: 0.9rem;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f2efe8;
+  padding: 0.85rem 0.95rem;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field-row,
+.button-row,
+.health-grid,
+.job-meta {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.field-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.button-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.health-grid,
+.job-meta,
+.task-state-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+.health-card,
+.job-meta div,
+.task-state-grid div {
+  border-radius: 18px;
+  padding: 0.85rem 0.95rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.health-card span,
+.job-meta span,
+.task-state-grid span,
+.task-meta,
+.task-deps {
+  color: #afab9f;
+  font-size: 0.86rem;
+}
+
+.health-card strong,
+.job-meta strong,
+.task-state-grid strong {
+  display: block;
+  margin-top: 0.3rem;
+}
+
+.job-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.runtime-hint {
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  background: rgba(255, 200, 107, 0.14);
+  color: #ffd89a;
+  border: 1px solid rgba(255, 200, 107, 0.18);
+}
+
+.progress-line {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ef6c33, #88f0ea);
+}
+
+.task-list,
+.log-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.task-card {
+  padding: 0.9rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.task-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.status-chip {
+  display: inline-flex;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.status-succeeded {
+  background: rgba(68, 196, 133, 0.18);
+  color: #8af5bc;
+}
+
+.status-running,
+.status-ready {
+  background: rgba(90, 190, 240, 0.18);
+  color: #7fdffd;
+}
+
+.status-pending {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ddd6cb;
+}
+
+.status-failed,
+.status-cancelled {
+  background: rgba(255, 95, 95, 0.18);
+  color: #ff9f9f;
+}
+
+.json-block {
+  margin: 0.65rem 0 0;
+  padding: 0.8rem;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.28);
+  overflow: auto;
+  font-size: 0.82rem;
+}
+
+.log-entry {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: 0.8rem;
+  align-items: start;
+  padding: 0.85rem 0.95rem;
+  border-radius: 18px;
+}
+
+.log-entry span {
+  color: #c5b79e;
+  font-size: 0.82rem;
+}
+
+.log-entry p {
+  margin: 0;
+}
+
+.log-info {
+  background: rgba(83, 127, 255, 0.12);
+}
+
+.log-success {
+  background: rgba(53, 175, 105, 0.16);
+}
+
+.log-error {
+  background: rgba(201, 58, 58, 0.14);
+}
+
+.empty-state {
+  padding: 1rem;
+  border-radius: 18px;
+  color: #b0a697;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+details summary {
+  cursor: pointer;
+  color: #dbc9b1;
+}
+
+@media (max-width: 1100px) {
+  .hero,
+  .grid,
+  .field-row,
+  .button-row,
+  .health-grid,
+  .job-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-form,
+  .panel-actions,
+  .panel-job,
+  .panel-tasks,
+  .panel-logs {
+    grid-column: span 12;
+  }
+
+  .health-strip {
+    justify-content: flex-start;
+  }
+}

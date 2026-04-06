@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	jobapp "github.com/sfzman/Narratio/backend/internal/app/jobs"
+	"github.com/sfzman/Narratio/backend/internal/middleware"
 	"github.com/sfzman/Narratio/backend/internal/model"
 	"github.com/sfzman/Narratio/backend/internal/store"
 )
@@ -60,12 +61,14 @@ func NewRouter(
 	}
 
 	router := gin.New()
+	router.Use(middleware.CORS())
 	router.Use(gin.Recovery())
 
 	api := router.Group("/api/v1")
 	api.GET("/health", h.healthCheck)
 	api.POST("/jobs", h.createJob)
 	api.GET("/jobs/:job_id", h.getJob)
+	api.GET("/jobs/:job_id/tasks", h.getJobTasks)
 	api.POST("/jobs/:job_id/dispatch-once", h.dispatchOnce)
 
 	return router

@@ -39,6 +39,19 @@ npm run dev
 后端默认端口：`8080`  
 前端默认端口：`5173`（Vite）
 
+后端配置加载规则：
+
+- 先读取当前进程已有环境变量
+- 若当前目录存在 `.env`，自动补充读取
+- 若从仓库根目录启动，也会尝试读取 `backend/.env`
+- `.env` 中的值不会覆盖已经存在的系统环境变量
+
+当前开发态 CORS 策略：
+
+- 后端对前端调试接口开启宽松 CORS
+- 允许 `http://localhost:5173` 这类本地 Vite 页面直接访问 `http://localhost:8080`
+- 当前实现对所有 origin 返回 `Access-Control-Allow-Origin: *`
+
 ### .env.example
 
 ```bash
@@ -70,13 +83,16 @@ WORKSPACE_DIR=./workspace
 
 - `cmd/server` 目前已完成配置读取、SQLite store 初始化、DashScope 文本 client 组装、script executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
 - 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health` 与 `POST /api/v1/jobs`
-- SQLite 模式会在启动时自动执行首个 migration
+- SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
 - 还没有启动 scheduler loop
 
 ## 项目结构（完整）
 
 ```
 narratio/
+  frontend/
+    src/
+    package.json
   backend/
     cmd/server/main.go
     internal/
@@ -108,6 +124,20 @@ narratio/
   docker-compose.yml
   README.md
 ```
+
+## 前端运行
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端默认读取：
+
+- `VITE_API_BASE_URL`
+
+未设置时默认使用 `http://localhost:8080/api/v1`。
 
 ## Makefile 常用命令
 

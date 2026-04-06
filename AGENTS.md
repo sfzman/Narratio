@@ -69,5 +69,5 @@ model → store → pipeline/* → scheduler → app/jobs → handler
 - [ ] pipeline/video executor
 - [x] app/jobs + workflow builder
 - [ ] handler 层
-- [ ] React 前端基础页面
+- [x] React 前端基础页面
 - [ ] 端到端集成测试

@@ -102,6 +102,12 @@
       "cancelled": 0,
       "skipped": 0
     },
+    "task_state": {
+      "ready_keys": ["character_sheet"],
+      "running_keys": [],
+      "failed_keys": []
+    },
+    "runtime_hint": "当前有 ready task，但 skeleton 模式没有后台自动调度。请继续点击 Dispatch Once。",
     "warnings": [],
     "error": null,
     "result": null
@@ -117,6 +123,11 @@
 - 默认不在 `GET /jobs/:id` 中展开完整 task 列表，避免响应过大
 - 如后续前端需要任务明细，可新增 `GET /jobs/:id/tasks`
 
+**task_state / runtime_hint 字段说明**：
+
+- `task_state` 返回当前 ready / running / failed 的 task key 快照，方便前端判断工作流停在哪
+- `runtime_hint` 是 skeleton 阶段的人类可读提示，用于解释“为什么现在没有 running task”
+
 **progress**：0~100 的整数，表示整体进度百分比
 
 当 status 为 `completed` 时，result 字段填充：
@@ -125,6 +136,41 @@
   "video_url": "/api/v1/jobs/job_abc123/download",
   "duration": 87.5,
   "file_size": 15728640
+}
+```
+
+---
+
+### GET /api/v1/jobs/:job_id/tasks — 查询任务明细
+
+用于开发调试或前端查看 DAG 明细，返回当前 job 下所有 task 的状态和关键产物引用。
+
+**Response 200**
+```json
+{
+  "code": 0,
+  "data": {
+    "job_id": "job_abc123",
+    "tasks": [
+      {
+        "id": 11,
+        "key": "outline",
+        "type": "outline",
+        "status": "succeeded",
+        "resource_key": "llm_text",
+        "depends_on": [],
+        "attempt": 1,
+        "max_attempts": 1,
+        "payload": {
+          "article": "..."
+        },
+        "output_ref": {
+          "artifact_path": "jobs/job_abc123/outline.json"
+        },
+        "error": null
+      }
+    ]
+  }
 }
 ```
 
@@ -235,6 +281,7 @@ Accept-Ranges: bytes
 
 - `POST /api/v1/jobs` 已实现
 - `GET /api/v1/jobs/:job_id` 已实现，返回 job 状态和 task 聚合统计
+- `GET /api/v1/jobs/:job_id/tasks` 已实现，返回 task 明细
 - `POST /api/v1/jobs/:job_id/dispatch-once` 已实现，仅用于开发态手动推进 task
 - `DELETE /api/v1/jobs/:job_id`、下载接口、音色列表接口尚未实现
 

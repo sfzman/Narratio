@@ -59,9 +59,14 @@ func (f *fakeTaskReader) ListTasksByJobPublicID(_ context.Context, _ string) ([]
 type fakeDispatcher struct {
 	outcome jobapp.DispatchOutcome
 	err     error
+	call    func(context.Context, string)
 }
 
-func (f *fakeDispatcher) DispatchOnce(_ context.Context, _ string) (jobapp.DispatchOutcome, error) {
+func (f *fakeDispatcher) DispatchOnce(ctx context.Context, publicID string) (jobapp.DispatchOutcome, error) {
+	if f.call != nil {
+		f.call(ctx, publicID)
+	}
+
 	if f.err != nil {
 		return jobapp.DispatchOutcome{}, f.err
 	}
@@ -87,8 +92,32 @@ func TestHealthCheck(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
 	if got := recorder.Body.String(); got == "" {
 		t.Fatal("body is empty")
+	}
+}
+
+func TestCORSPreflight(t *testing.T) {
+	router := NewRouter(nil, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/jobs", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); got == "" {
+		t.Fatal("Access-Control-Allow-Methods is empty")
 	}
 }
 
@@ -189,6 +218,9 @@ func TestGetJob(t *testing.T) {
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"running":1`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"runtime_hint":"当前有 task 处于运行中，可继续刷新查看进展。"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
 }
 
 func TestGetJobNotFound(t *testing.T) {
@@ -207,6 +239,55 @@ func TestGetJobNotFound(t *testing.T) {
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+func TestGetJobTasks(t *testing.T) {
+	now := time.Date(2026, 4, 4, 14, 0, 0, 0, time.UTC)
+	router := NewRouter(
+		nil,
+		&fakeJobReader{
+			job: model.Job{PublicID: "job_abc123"},
+		},
+		&fakeTaskReader{
+			tasks: []model.Task{
+				{
+					ID:          11,
+					Key:         "outline",
+					Type:        model.TaskTypeOutline,
+					Status:      model.TaskStatusSucceeded,
+					ResourceKey: model.ResourceLLMText,
+					DependsOn:   []string{},
+					Attempt:     1,
+					MaxAttempts: 1,
+					Payload: map[string]any{
+						"article": "hello",
+					},
+					OutputRef: map[string]any{
+						"artifact_path": "jobs/job_abc123/outline.json",
+					},
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+			},
+		},
+		nil,
+		HealthStatus{},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_abc123/tasks", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"key":"outline"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"artifact_path":"jobs/job_abc123/outline.json"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 
@@ -259,5 +340,46 @@ func TestDispatchOnce(t *testing.T) {
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"executed_task_key":"outline"`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestDispatchOnceUsesDetachedContext(t *testing.T) {
+	router := NewRouter(
+		nil,
+		nil,
+		nil,
+		&fakeDispatcher{
+			outcome: jobapp.DispatchOutcome{
+				Job: model.Job{
+					PublicID: "job_abc123",
+					Status:   model.JobStatusRunning,
+					Progress: 50,
+				},
+				Dispatched:      true,
+				ExecutedTaskID:  14,
+				ExecutedTaskKey: "character_sheet",
+			},
+			call: func(ctx context.Context, publicID string) {
+				if publicID != "job_abc123" {
+					t.Fatalf("publicID = %q", publicID)
+				}
+				if err := ctx.Err(); err != nil {
+					t.Fatalf("dispatch context should not inherit request cancellation, got %v", err)
+				}
+			},
+		},
+		HealthStatus{},
+	)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/job_abc123/dispatch-once", nil)
+	requestCtx, cancel := context.WithCancel(request.Context())
+	cancel()
+	request = request.WithContext(requestCtx)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
 	}
 }

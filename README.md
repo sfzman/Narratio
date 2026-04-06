@@ -24,3 +24,9 @@
 - Frontend: React + TypeScript + Vite
 - AI: DashScope 文本/图像/视频接口（承载 Qwen/Wan 模型）+ 自部署 TTS
 - Render: FFmpeg
+
+当前本地调试路径：
+
+1. 启动后端
+2. 启动 `frontend/` 下的 Vite 页面
+3. 在前端调试台依次调用 `POST /jobs`、`GET /jobs/:id`、`GET /jobs/:id/tasks`、`POST /jobs/:id/dispatch-once`

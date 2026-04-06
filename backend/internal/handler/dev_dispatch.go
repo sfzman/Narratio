@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+const dispatchOnceTimeout = 2 * time.Minute
 
 func (h Handlers) dispatchOnce(c *gin.Context) {
 	if h.dispatcher == nil {
@@ -13,7 +17,10 @@ func (h Handlers) dispatchOnce(c *gin.Context) {
 	}
 
 	jobPublicID := c.Param("job_id")
-	result, err := h.dispatcher.DispatchOnce(c.Request.Context(), jobPublicID)
+	dispatchCtx, cancel := context.WithTimeout(context.Background(), dispatchOnceTimeout)
+	defer cancel()
+
+	result, err := h.dispatcher.DispatchOnce(dispatchCtx, jobPublicID)
 	if err != nil {
 		if isJobNotFound(err) {
 			failure(c, http.StatusNotFound, 1002, "任务不存在")

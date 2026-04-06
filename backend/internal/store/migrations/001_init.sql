@@ -1,4 +1,4 @@
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     public_id VARCHAR(64) NOT NULL UNIQUE,
     token VARCHAR(64) NOT NULL,
@@ -21,9 +21,9 @@ CREATE TABLE jobs (
 -- error_json: terminal job-level error serialized as JSON.
 -- result_json: final output metadata serialized as JSON.
 
-CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL,
     task_key VARCHAR(64) NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE tasks (
 -- output_ref_json: references to task outputs serialized as JSON.
 -- error_json: latest terminal task error serialized as JSON.
 
-CREATE INDEX idx_tasks_job_id ON tasks(job_id);
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_job_status ON tasks(job_id, status);
-CREATE UNIQUE INDEX idx_tasks_job_key ON tasks(job_id, task_key);
+CREATE INDEX IF NOT EXISTS idx_tasks_job_id ON tasks(job_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_job_status ON tasks(job_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_job_key ON tasks(job_id, task_key);

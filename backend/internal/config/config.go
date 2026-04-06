@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -25,6 +27,10 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	if err := loadDotEnvCandidates(".env", filepath.Join("backend", ".env")); err != nil {
+		return nil, err
+	}
+
 	databaseDriver, err := requiredEnv("DATABASE_DRIVER")
 	if err != nil {
 		return nil, err
@@ -92,4 +98,71 @@ func envOrDefault(key, fallback string) string {
 
 func env(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
+}
+
+func loadDotEnvCandidates(paths ...string) error {
+	for _, path := range paths {
+		if err := loadDotEnv(path); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func loadDotEnv(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("parse %s:%d: missing '='", path, lineNumber)
+		}
+
+		key = strings.TrimSpace(strings.TrimPrefix(key, "export "))
+		value = trimEnvValue(value)
+		if key == "" {
+			return fmt.Errorf("parse %s:%d: empty key", path, lineNumber)
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set env %s from %s:%d: %w", key, path, lineNumber, err)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan %s: %w", path, err)
+	}
+
+	return nil
+}
+
+func trimEnvValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) >= 2 {
+		if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
+			(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
+			return trimmed[1 : len(trimmed)-1]
+		}
+	}
+
+	return trimmed
 }

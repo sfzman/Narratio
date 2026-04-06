@@ -56,7 +56,7 @@ func LoadRuntime() (*Runtime, error) {
 	textClient, err := scriptpipeline.NewHTTPTextClient(
 		cfg.DashScopeTextBaseURL,
 		cfg.DashScopeTextAPIKey,
-		&http.Client{Timeout: 30 * time.Second},
+		&http.Client{Timeout: 600 * time.Second},
 	)
 	if err != nil {
 		_ = db.Close()
