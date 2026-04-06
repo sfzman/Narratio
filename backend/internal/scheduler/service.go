@@ -87,6 +87,7 @@ func (s *Service) DispatchOnce(
 		result.Tasks,
 		job.Status == model.JobStatusCancelling,
 	)
+	job.Result = buildJobResult(result.Tasks)
 	job.UpdatedAt = now
 	if err := s.jobStore.UpdateJob(ctx, job); err != nil {
 		s.log.Error("persist job state failed",
@@ -178,4 +179,65 @@ func taskErrorEqual(a *model.TaskError, b *model.TaskError) bool {
 	}
 
 	return a.Code == b.Code && a.Message == b.Message
+}
+
+func buildJobResult(tasks []model.Task) *model.JobResult {
+	for _, task := range tasks {
+		if task.Type != model.TaskTypeVideo || task.Status != model.TaskStatusSucceeded {
+			continue
+		}
+
+		videoPath, ok := task.OutputRef["artifact_path"].(string)
+		if !ok || videoPath == "" {
+			return nil
+		}
+
+		return &model.JobResult{
+			VideoPath: videoPath,
+			Duration:  outputFloat(task.OutputRef, "duration_seconds"),
+			FileSize:  outputInt64(task.OutputRef, "file_size_bytes"),
+		}
+	}
+
+	return nil
+}
+
+func outputFloat(values map[string]any, key string) float64 {
+	value, ok := values[key]
+	if !ok {
+		return 0
+	}
+
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
+func outputInt64(values map[string]any, key string) int64 {
+	value, ok := values[key]
+	if !ok {
+		return 0
+	}
+
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	case float32:
+		return int64(typed)
+	default:
+		return 0
+	}
 }

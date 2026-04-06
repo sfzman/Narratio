@@ -16,7 +16,10 @@ import (
 	"github.com/sfzman/Narratio/backend/internal/config"
 	"github.com/sfzman/Narratio/backend/internal/handler"
 	"github.com/sfzman/Narratio/backend/internal/model"
+	imagepipeline "github.com/sfzman/Narratio/backend/internal/pipeline/image"
 	scriptpipeline "github.com/sfzman/Narratio/backend/internal/pipeline/script"
+	ttspipeline "github.com/sfzman/Narratio/backend/internal/pipeline/tts"
+	videopipeline "github.com/sfzman/Narratio/backend/internal/pipeline/video"
 	"github.com/sfzman/Narratio/backend/internal/scheduler"
 	sqlstore "github.com/sfzman/Narratio/backend/internal/store/sql"
 )
@@ -71,6 +74,9 @@ func LoadRuntime() (*Runtime, error) {
 		model.TaskTypeOutline:        scriptpipeline.NewOutlineExecutorWithClient(textClient, textGenerationConfig),
 		model.TaskTypeCharacterSheet: scriptpipeline.NewCharacterSheetExecutorWithClient(textClient, textGenerationConfig),
 		model.TaskTypeScript:         scriptpipeline.NewScriptExecutorWithClient(textClient, textGenerationConfig),
+		model.TaskTypeTTS:            ttspipeline.NewExecutor(),
+		model.TaskTypeImage:          imagepipeline.NewExecutor(),
+		model.TaskTypeVideo:          videopipeline.NewExecutor(),
 	})
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
 	jobsService := jobapp.NewService(store)
@@ -79,9 +85,10 @@ func LoadRuntime() (*Runtime, error) {
 	router := handler.NewRouter(jobsService, store, store, dispatchService, handler.HealthStatus{
 		Version: "dev",
 		Services: map[string]string{
-			"database":       "ok",
-			"dashscope_text": healthStatus(cfg.DashScopeTextAPIKey != ""),
-			"tts":            healthStatus(cfg.TTSAPIKey != ""),
+			"database":        "ok",
+			"dashscope_text":  healthStatus(cfg.DashScopeTextAPIKey != ""),
+			"dashscope_image": healthStatus(cfg.DashScopeImageAPIKey != ""),
+			"tts":             healthStatus(cfg.TTSAPIKey != ""),
 		},
 	})
 

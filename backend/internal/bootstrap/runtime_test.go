@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/sfzman/Narratio/backend/internal/model"
 )
 
 func TestLoadRuntime(t *testing.T) {
@@ -34,6 +36,15 @@ func TestLoadRuntime(t *testing.T) {
 	}
 	if runtime.ExecutorRegistry == nil {
 		t.Fatal("ExecutorRegistry = nil")
+	}
+	if _, ok := runtime.ExecutorRegistry.Get(model.TaskTypeTTS); !ok {
+		t.Fatal("TTS executor not registered")
+	}
+	if _, ok := runtime.ExecutorRegistry.Get(model.TaskTypeImage); !ok {
+		t.Fatal("image executor not registered")
+	}
+	if _, ok := runtime.ExecutorRegistry.Get(model.TaskTypeVideo); !ok {
+		t.Fatal("video executor not registered")
 	}
 	if runtime.Store == nil {
 		t.Fatal("Store = nil")

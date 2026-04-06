@@ -63,10 +63,10 @@ model → store → pipeline/* → scheduler → app/jobs → handler
 - [x] model/job + model/task
 - [x] store/job + store/task
 - [x] scheduler 最小骨架
-- [ ] pipeline/script executor
-- [ ] pipeline/tts executor
-- [ ] pipeline/image executor
-- [ ] pipeline/video executor
+- [x] pipeline/script executor skeleton
+- [x] pipeline/tts executor skeleton
+- [x] pipeline/image executor skeleton
+- [x] pipeline/video executor skeleton
 - [x] app/jobs + workflow builder
 - [ ] handler 层
 - [x] React 前端基础页面

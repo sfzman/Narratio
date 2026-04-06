@@ -177,6 +177,10 @@ type SubtitleItem struct {
 
 **文件命名规范**：`{job_id}/audio/segment_{index:03d}.wav`
 
+**当前代码状态**
+- 已接入最小 skeleton executor：消费 `script` 输出，产出假的音频 manifest / 字幕引用，便于继续推进 DAG
+- 尚未接入真实 TTS API、segment 内并发合成与音频文件落盘
+
 ---
 
 ### Task Type: image（配图生成）
@@ -220,6 +224,10 @@ type GeneratedImage struct {
 
 **文件命名规范**：`{job_id}/images/segment_{index:03d}.jpg`
 
+**当前代码状态**
+- 已接入最小 skeleton executor：消费 `script` 输出，产出假的图片 manifest，默认标记为 `is_fallback=true`
+- 尚未接入真实 DashScope 图像接口、prompt 构建细化与图片文件落盘
+
 ---
 
 ### Task Type: video（视频合成）
@@ -256,6 +264,11 @@ type VideoOutput struct {
 **不重试**（FFmpeg 失败通常是输入问题，重试无意义，直接 failed）
 
 **文件命名规范**：`{job_id}/output/final.mp4`
+
+**当前代码状态**
+- 已接入最小 skeleton executor：消费 `tts` 与 `image` 输出，产出假的 MP4 引用、时长和文件大小
+- `scheduler` 会在 `video` 成功后将上述产物提升为 `job.Result`
+- 尚未接入真实 FFmpeg 调用、SRT 生成与最终文件落盘
 
 ---
 

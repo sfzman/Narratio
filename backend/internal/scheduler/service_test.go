@@ -11,7 +11,10 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sfzman/Narratio/backend/internal/model"
+	imagepipeline "github.com/sfzman/Narratio/backend/internal/pipeline/image"
 	scriptpipeline "github.com/sfzman/Narratio/backend/internal/pipeline/script"
+	ttspipeline "github.com/sfzman/Narratio/backend/internal/pipeline/tts"
+	videopipeline "github.com/sfzman/Narratio/backend/internal/pipeline/video"
 	sqlstore "github.com/sfzman/Narratio/backend/internal/store/sql"
 )
 
@@ -213,6 +216,335 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	}
 	if persistedAfterThird[2].Attempt != 1 {
 		t.Fatalf("script attempt after third dispatch = %d, want 1", persistedAfterThird[2].Attempt)
+	}
+}
+
+func TestDispatchOnceExecutesTTSAfterScript(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_tts",
+		Token:     "job_token_scheduler_tts",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{},
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"article":  "story",
+				"language": "zh",
+				"voice_id": "default",
+			},
+			OutputRef: map[string]any{
+				"artifact_type": "script",
+				"artifact_path": "jobs/job_public_scheduler_tts/script.json",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			Key:         "tts",
+			Type:        model.TaskTypeTTS,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceTTS,
+			DependsOn:   []string{"script"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"voice_id": "default",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeTTS: ttspipeline.NewExecutor(),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceTTS: 1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	result, updatedJob, err := service.DispatchOnce(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+	if !result.Dispatched {
+		t.Fatal("DispatchOnce() dispatched = false, want true")
+	}
+	if result.ExecutedTaskKey != "tts" {
+		t.Fatalf("DispatchOnce() executed = %q, want %q", result.ExecutedTaskKey, "tts")
+	}
+	if updatedJob.Status != model.JobStatusCompleted {
+		t.Fatalf("job status = %q, want %q", updatedJob.Status, model.JobStatusCompleted)
+	}
+	if updatedJob.Progress != 100 {
+		t.Fatalf("job progress = %d, want 100", updatedJob.Progress)
+	}
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if len(persistedTasks) != 2 {
+		t.Fatalf("task len = %d, want 2", len(persistedTasks))
+	}
+	if persistedTasks[1].Status != model.TaskStatusSucceeded {
+		t.Fatalf("tts status = %q, want %q", persistedTasks[1].Status, model.TaskStatusSucceeded)
+	}
+	if persistedTasks[1].OutputRef["artifact_type"] != "tts" {
+		t.Fatalf("tts output_ref = %#v", persistedTasks[1].OutputRef)
+	}
+	if persistedTasks[1].OutputRef["script_artifact_ref"] != "jobs/job_public_scheduler_tts/script.json" {
+		t.Fatalf("tts script ref = %#v", persistedTasks[1].OutputRef["script_artifact_ref"])
+	}
+}
+
+func TestDispatchOnceExecutesImageAfterScript(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_image",
+		Token:     "job_token_scheduler_image",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{},
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"article":  "story",
+				"language": "zh",
+				"voice_id": "default",
+			},
+			OutputRef: map[string]any{
+				"artifact_type": "script",
+				"artifact_path": "jobs/job_public_scheduler_image/script.json",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			Key:         "image",
+			Type:        model.TaskTypeImage,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceImageGen,
+			DependsOn:   []string{"script"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"image_style": "cinematic",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeImage: imagepipeline.NewExecutor(),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceImageGen: 1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	result, updatedJob, err := service.DispatchOnce(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+	if !result.Dispatched {
+		t.Fatal("DispatchOnce() dispatched = false, want true")
+	}
+	if result.ExecutedTaskKey != "image" {
+		t.Fatalf("DispatchOnce() executed = %q, want %q", result.ExecutedTaskKey, "image")
+	}
+	if updatedJob.Status != model.JobStatusCompleted {
+		t.Fatalf("job status = %q, want %q", updatedJob.Status, model.JobStatusCompleted)
+	}
+	if updatedJob.Progress != 100 {
+		t.Fatalf("job progress = %d, want 100", updatedJob.Progress)
+	}
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if len(persistedTasks) != 2 {
+		t.Fatalf("task len = %d, want 2", len(persistedTasks))
+	}
+	if persistedTasks[1].Status != model.TaskStatusSucceeded {
+		t.Fatalf("image status = %q, want %q", persistedTasks[1].Status, model.TaskStatusSucceeded)
+	}
+	if persistedTasks[1].OutputRef["artifact_type"] != "image" {
+		t.Fatalf("image output_ref = %#v", persistedTasks[1].OutputRef)
+	}
+	if persistedTasks[1].OutputRef["script_artifact_ref"] != "jobs/job_public_scheduler_image/script.json" {
+		t.Fatalf("image script ref = %#v", persistedTasks[1].OutputRef["script_artifact_ref"])
+	}
+}
+
+func TestDispatchOnceExecutesVideoAndPersistsJobResult(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 6, 11, 0, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_video",
+		Token:     "job_token_scheduler_video",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "tts",
+			Type:        model.TaskTypeTTS,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceTTS,
+			DependsOn:   []string{},
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{"voice_id": "default"},
+			OutputRef: map[string]any{
+				"artifact_type":          "tts",
+				"artifact_path":          "jobs/job_public_scheduler_video/audio/tts_manifest.json",
+				"total_duration_seconds": 9.5,
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			Key:         "image",
+			Type:        model.TaskTypeImage,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceImageGen,
+			DependsOn:   []string{},
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{"image_style": "cinematic"},
+			OutputRef: map[string]any{
+				"artifact_type": "image",
+				"artifact_path": "jobs/job_public_scheduler_video/images/image_manifest.json",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			Key:         "video",
+			Type:        model.TaskTypeVideo,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceVideoRender,
+			DependsOn:   []string{"tts", "image"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeVideo: videopipeline.NewExecutor(),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceVideoRender: 1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	result, updatedJob, err := service.DispatchOnce(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+	if !result.Dispatched {
+		t.Fatal("DispatchOnce() dispatched = false, want true")
+	}
+	if result.ExecutedTaskKey != "video" {
+		t.Fatalf("DispatchOnce() executed = %q, want %q", result.ExecutedTaskKey, "video")
+	}
+	if updatedJob.Status != model.JobStatusCompleted {
+		t.Fatalf("job status = %q, want %q", updatedJob.Status, model.JobStatusCompleted)
+	}
+	if updatedJob.Result == nil {
+		t.Fatal("job result = nil, want video result")
+	}
+	if updatedJob.Result.VideoPath != "jobs/job_public_scheduler_video/output/final.mp4" {
+		t.Fatalf("video path = %q", updatedJob.Result.VideoPath)
+	}
+	if updatedJob.Result.Duration != 9.5 {
+		t.Fatalf("duration = %v, want 9.5", updatedJob.Result.Duration)
+	}
+
+	persistedJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if persistedJob.Result == nil {
+		t.Fatal("persisted job result = nil, want video result")
+	}
+	if persistedJob.Result.FileSize == 0 {
+		t.Fatal("persisted job file size = 0, want non-zero")
 	}
 }
 
