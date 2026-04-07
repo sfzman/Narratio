@@ -108,6 +108,25 @@ button:hover {
   color: #8ac0d6;
 }
 
+.polling-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.polling-pill.active {
+  color: #9cf1d2;
+  background: rgba(85, 184, 125, 0.16);
+}
+
+.polling-pill.idle {
+  color: #e7c58c;
+  background: rgba(231, 197, 140, 0.12);
+}
+
 .grid {
   display: grid;
   gap: 1rem;
@@ -195,6 +214,19 @@ button:hover {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+  color: #d8cdbd;
+}
+
+.toggle-row input {
+  width: 1rem;
+  height: 1rem;
+}
+
 .health-grid,
 .job-meta,
 .task-state-grid {
@@ -231,6 +263,115 @@ button:hover {
   gap: 1rem;
 }
 
+.result-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border-radius: 20px;
+  border: 1px solid rgba(136, 240, 234, 0.16);
+  background: linear-gradient(180deg, rgba(136, 240, 234, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.result-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.result-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.result-head span {
+  color: #8af5bc;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.result-grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.result-grid div {
+  border-radius: 16px;
+  padding: 0.85rem 0.95rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.result-grid span {
+  color: #afab9f;
+  font-size: 0.86rem;
+}
+
+.result-grid strong {
+  display: block;
+  margin-top: 0.3rem;
+  word-break: break-all;
+}
+
+.error-card,
+.spotlight-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 20px;
+}
+
+.error-card {
+  border: 1px solid rgba(255, 111, 111, 0.22);
+  background: rgba(201, 58, 58, 0.14);
+}
+
+.error-head,
+.spotlight-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.error-head h3,
+.spotlight-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.error-head span,
+.spotlight-head span {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.error-card p,
+.spotlight-card p {
+  margin: 0;
+}
+
+.error-head span {
+  color: #ffb2b2;
+}
+
+.spotlight-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.spotlight-ready {
+  background: rgba(83, 127, 255, 0.12);
+}
+
+.spotlight-running {
+  background: rgba(85, 184, 125, 0.16);
+}
+
+.spotlight-failed {
+  background: rgba(201, 58, 58, 0.14);
+}
+
 .runtime-hint {
   padding: 0.9rem 1rem;
   border-radius: 18px;
@@ -262,6 +403,24 @@ button:hover {
   padding: 0.9rem;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.task-error {
+  margin-top: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 16px;
+  background: rgba(201, 58, 58, 0.16);
+  border: 1px solid rgba(255, 111, 111, 0.18);
+}
+
+.task-error strong {
+  display: block;
+  color: #ffb2b2;
+}
+
+.task-error p {
+  margin: 0.35rem 0 0;
+  color: #f2d3d3;
 }
 
 .task-topline {

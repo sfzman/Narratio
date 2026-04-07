@@ -61,6 +61,7 @@ GIN_MODE=debug
 DATABASE_DRIVER=sqlite
 DATABASE_DSN=./narratio.db
 ENABLE_LIVE_TEXT_GENERATION=false
+ENABLE_LIVE_IMAGE_GENERATION=false
 
 DASHSCOPE_TEXT_API_KEY=your-dashscope-text-key-here
 DASHSCOPE_TEXT_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
@@ -82,15 +83,19 @@ WORKSPACE_DIR=./workspace
 
 当前代码状态：
 
-- `cmd/server` 目前已完成配置读取、SQLite store 初始化、script/tts/image/video skeleton executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
-- 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health` 与 `POST /api/v1/jobs`
+- `cmd/server` 目前已完成配置读取、SQLite store 初始化、`segmentation / outline / character_sheet / script / character_image / tts / image / video` executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
+- 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health`、`POST /api/v1/jobs`、`GET /api/v1/jobs/:job_id`、`GET /api/v1/jobs/:job_id/tasks` 与开发态 `POST /api/v1/jobs/:job_id/dispatch-once`
 - SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
 - 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
+- `segmentation / outline / character_sheet / script / character_image / image` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
+- `image` 已支持注入真实 DashScope client；只有显式打开 `ENABLE_LIVE_IMAGE_GENERATION=true` 且配置了 `DASHSCOPE_IMAGE_API_KEY` 时，才会尝试真实图片请求
 
 注意：
 
 - 当前默认是 skeleton 模式，`ENABLE_LIVE_TEXT_GENERATION=false`
-- 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口
+- 图片默认也仍是 skeleton 模式，`ENABLE_LIVE_IMAGE_GENERATION=false`
+- 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口；`segmentation` 始终走本地 deterministic 路径
+- 即使配置了 `DASHSCOPE_IMAGE_API_KEY`，只要不显式打开该开关，`image` 也不会调用真实 DashScope 图像接口
 
 ## 项目结构（完整）
 
@@ -173,16 +178,16 @@ coverage:
 
 ## 健康检查
 
-服务启动时自动检查：
-1. 所有必填环境变量是否存在
+当前实现的启动期检查主要包括：
+1. 配置是否能成功加载
 2. 数据库连接是否可用
-3. migrations 是否已应用
-4. `ffmpeg` 是否在 PATH 中
-5. Workspace 目录是否可写
-6. TTS 服务 `/health` 是否可达
-7. DashScope 文本 / 图像 / 视频配置是否完整
+3. SQLite migration 是否已应用
 
-任意检查失败，服务拒绝启动并打印明确错误信息。
+当前尚未在启动时执行以下真实探测：
+- `ffmpeg` PATH 检查
+- Workspace 可写性探测
+- TTS `/health` 联通性检查
+- DashScope 文本 / 图像 / 视频的真实可用性探测
 
 ## 数据库策略
 

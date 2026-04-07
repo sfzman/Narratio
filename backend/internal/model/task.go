@@ -5,9 +5,11 @@ import "time"
 type TaskType string
 
 const (
+	TaskTypeSegmentation   TaskType = "segmentation"
 	TaskTypeOutline        TaskType = "outline"
 	TaskTypeCharacterSheet TaskType = "character_sheet"
 	TaskTypeScript         TaskType = "script"
+	TaskTypeCharacterImage TaskType = "character_image"
 	TaskTypeTTS            TaskType = "tts"
 	TaskTypeImage          TaskType = "image"
 	TaskTypeVideo          TaskType = "video"
@@ -28,6 +30,7 @@ const (
 type ResourceKey string
 
 const (
+	ResourceLocalCPU    ResourceKey = "local_cpu"
 	ResourceLLMText     ResourceKey = "llm_text"
 	ResourceTTS         ResourceKey = "tts"
 	ResourceImageGen    ResourceKey = "image_gen"

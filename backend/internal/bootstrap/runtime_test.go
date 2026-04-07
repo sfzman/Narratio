@@ -34,8 +34,17 @@ func TestLoadRuntime(t *testing.T) {
 	if runtime.TextClient != nil {
 		t.Fatal("TextClient != nil, want skeleton default")
 	}
+	if runtime.ImageClient != nil {
+		t.Fatal("ImageClient != nil, want skeleton default")
+	}
 	if runtime.ExecutorRegistry == nil {
 		t.Fatal("ExecutorRegistry = nil")
+	}
+	if _, ok := runtime.ExecutorRegistry.Get(model.TaskTypeSegmentation); !ok {
+		t.Fatal("segmentation executor not registered")
+	}
+	if _, ok := runtime.ExecutorRegistry.Get(model.TaskTypeCharacterImage); !ok {
+		t.Fatal("character_image executor not registered")
 	}
 	if _, ok := runtime.ExecutorRegistry.Get(model.TaskTypeTTS); !ok {
 		t.Fatal("TTS executor not registered")
@@ -92,5 +101,31 @@ func TestLoadRuntimeBuildsTextClientWhenEnabled(t *testing.T) {
 
 	if runtime.TextClient == nil {
 		t.Fatal("TextClient = nil, want live client when enabled")
+	}
+}
+
+func TestLoadRuntimeBuildsImageClientWhenEnabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "narratio-image.db")
+
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", dbPath)
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("ENABLE_LIVE_IMAGE_GENERATION", "true")
+	t.Setenv("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
+	t.Setenv("DASHSCOPE_IMAGE_API_KEY", "test-key")
+	t.Setenv("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0")
+
+	runtime, err := LoadRuntime()
+	if err != nil {
+		t.Fatalf("LoadRuntime() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runtime.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	if runtime.ImageClient == nil {
+		t.Fatal("ImageClient = nil, want live client when enabled")
 	}
 }

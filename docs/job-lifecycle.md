@@ -75,8 +75,8 @@ type Task struct {
 
 约束：
 
-- `Task.Type` 表示业务语义，如 `outline`、`character_sheet`、`tts`
-- `Task.ResourceKey` 表示资源语义，如 `llm_text`、`image_gen`
+- `Task.Type` 表示业务语义，如 `segmentation`、`outline`、`character_sheet`、`character_image`、`tts`
+- `Task.ResourceKey` 表示资源语义，如 `local_cpu`、`llm_text`、`image_gen`
 - 不允许把资源并发控制硬编码到 task type
 
 ## Job 状态
@@ -144,16 +144,21 @@ MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬
 示例：
 
 ```text
-outline --------\
-                 -> script -> tts --\
-character_sheet-/                    -> video
-                 -> image ----------/
+segmentation -----------\
+outline -----------------\
+                          -> script ---------> tts --\
+character_sheet -> character_image -> image ---------> video
+                 \--------> script -------------------/
 ```
 
 在这个例子里：
 
-- `outline` 与 `character_sheet` 可并行
-- 二者都依赖 `llm_text` 资源池
+- `segmentation`、`outline` 与 `character_sheet` 可并行
+- `script` 只有在三者都成功后才会进入 `ready`
+- `character_image` 依赖 `character_sheet`，用于独立产出人物参考图 artifact
+- `image` 依赖 `script` 和 `character_image`，普通配图与人物参考图在任务层分离
+- `outline` 与 `character_sheet` 依赖 `llm_text`，`segmentation` 依赖 `local_cpu`
+- `character_image` 与 `image` 依赖 `image_gen`
 - `video` 依赖 `tts` 和 `image`
 
 ## 资源感知调度
@@ -164,6 +169,7 @@ MVP 资源池示例：
 
 ```go
 const (
+    ResourceLocalCPU   ResourceKey = "local_cpu"
     ResourceLLMText    ResourceKey = "llm_text"
     ResourceTTS        ResourceKey = "tts"
     ResourceImageGen   ResourceKey = "image_gen"
@@ -173,6 +179,7 @@ const (
 
 默认并发建议：
 
+- `local_cpu`: 4
 - `llm_text`: 2
 - `tts`: 3
 - `image_gen`: 2
@@ -192,7 +199,8 @@ const (
 - 第二步增加“单次只 dispatch 一个 ready task”的同步执行入口
 - 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
 - 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
-- 当前 skeleton 已可让 script task 读取 outline / character_sheet 的依赖产物
+- 当前 skeleton 已可让 script task 读取 segmentation / outline / character_sheet 的依赖产物
+- 当前 skeleton 已新增 `character_image` 独立 task，成功后会把人物参考图 manifest 落盘到 workspace
 - 当前最小后台 runner 已接入，默认会在 job 创建后自动持续推进
 - `POST /jobs/:id/dispatch-once` 仍保留为开发态接口；若同一 job 已在后台运行，该接口返回 no-op
 

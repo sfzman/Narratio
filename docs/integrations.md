@@ -11,7 +11,7 @@
 
 ## 1. DashScope 文本生成 API（OpenAI-compatible mode，脚本优化）
 
-**用途**：将原始文章分段，生成朗诵脚本和图像摘要
+**用途**：提炼大纲、生成人物表，并基于既定分段生成朗诵脚本和图像摘要
 
 **Endpoint**：由 `DASHSCOPE_TEXT_BASE_URL` 配置，client 内部拼接 `/chat/completions`
 
@@ -100,18 +100,21 @@ payload := map[string]any{
 ```json
 {
   "model": "qwen-image",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"image": "https://example.com/reference-1.png"},
-        {"text": "图像描述文本"}
-      ]
-    }
-  ],
-  "result_format": "message",
-  "negative_prompt": "人物面部特写, 模糊, 低质量",
-  "size": "1280*720"
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"image": "https://example.com/reference-1.png"},
+          {"text": "图像描述文本"}
+        ]
+      }
+    ]
+  },
+  "parameters": {
+    "negative_prompt": "人物面部特写, 模糊, 低质量",
+    "size": "1280*720"
+  }
 }
 ```
 
@@ -125,6 +128,8 @@ payload := map[string]any{
 - 超时：同上，跳过该段并记录 warning
 
 **降级策略**：若某段图像生成失败，使用纯色背景图（1280x720，固定颜色 `#1a1a2e`）替代，不阻断视频合成。
+
+**当前实现状态**：当前仓库已接入最小 HTTP client 与 executor 注入；只有显式开启 `ENABLE_LIVE_IMAGE_GENERATION=true` 时才会尝试真实请求。当前真实 smoke 已验证该接口需要使用 `input.messages` + `parameters` 的请求形状。当前真实出图成功后，会把 `request_id`、使用模型和下载源图 URL 回填到 image manifest；若仍走 skeleton 或单段请求失败，也会把本地纯色 fallback JPEG 真实落盘。但仍未补齐多图参考输入。
 
 ---
 

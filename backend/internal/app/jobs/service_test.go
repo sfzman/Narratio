@@ -62,30 +62,45 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 		t.Fatalf("CreateJob() image_style = %q, want %q", job.Spec.Options.ImageStyle, "realistic")
 	}
 
-	if len(tasks) != 6 {
-		t.Fatalf("CreateJob() tasks len = %d, want 6", len(tasks))
+	if len(tasks) != 8 {
+		t.Fatalf("CreateJob() tasks len = %d, want 8", len(tasks))
+	}
+	if tasks[0].Key != "segmentation" {
+		t.Fatalf("CreateJob() task[0].Key = %q, want %q", tasks[0].Key, "segmentation")
 	}
 	if tasks[0].Payload["article"] != "hello world" {
-		t.Fatalf("CreateJob() outline payload article = %#v, want %#v", tasks[0].Payload["article"], "hello world")
+		t.Fatalf("CreateJob() segmentation payload article = %#v, want %#v", tasks[0].Payload["article"], "hello world")
 	}
 	if tasks[0].Payload["language"] != "zh" {
-		t.Fatalf("CreateJob() outline payload language = %#v, want %#v", tasks[0].Payload["language"], "zh")
+		t.Fatalf("CreateJob() segmentation payload language = %#v, want %#v", tasks[0].Payload["language"], "zh")
 	}
-	if tasks[4].Payload["image_style"] != "realistic" {
-		t.Fatalf("CreateJob() image payload style = %#v, want %#v", tasks[4].Payload["image_style"], "realistic")
+	if tasks[4].Key != "character_image" {
+		t.Fatalf("CreateJob() task[4].Key = %q, want %q", tasks[4].Key, "character_image")
+	}
+	if len(tasks[4].DependsOn) != 1 || tasks[4].DependsOn[0] != "character_sheet" {
+		t.Fatalf("CreateJob() character_image depends_on = %#v, want [character_sheet]", tasks[4].DependsOn)
+	}
+	if tasks[6].Payload["image_style"] != "realistic" {
+		t.Fatalf("CreateJob() image payload style = %#v, want %#v", tasks[6].Payload["image_style"], "realistic")
 	}
 
-	if tasks[2].Key != "script" {
-		t.Fatalf("CreateJob() task[2].Key = %q, want %q", tasks[2].Key, "script")
+	if tasks[3].Key != "script" {
+		t.Fatalf("CreateJob() task[3].Key = %q, want %q", tasks[3].Key, "script")
 	}
-	if len(tasks[2].DependsOn) != 2 {
-		t.Fatalf("CreateJob() script depends_on = %#v, want 2 deps", tasks[2].DependsOn)
+	if len(tasks[3].DependsOn) != 3 {
+		t.Fatalf("CreateJob() script depends_on = %#v, want 3 deps", tasks[3].DependsOn)
 	}
-	if tasks[5].Key != "video" {
-		t.Fatalf("CreateJob() task[5].Key = %q, want %q", tasks[5].Key, "video")
+	if tasks[6].Key != "image" {
+		t.Fatalf("CreateJob() task[6].Key = %q, want %q", tasks[6].Key, "image")
 	}
-	if len(tasks[5].DependsOn) != 2 {
-		t.Fatalf("CreateJob() video depends_on = %#v, want 2 deps", tasks[5].DependsOn)
+	if len(tasks[6].DependsOn) != 2 {
+		t.Fatalf("CreateJob() image depends_on = %#v, want 2 deps", tasks[6].DependsOn)
+	}
+	if tasks[7].Key != "video" {
+		t.Fatalf("CreateJob() task[7].Key = %q, want %q", tasks[7].Key, "video")
+	}
+	if len(tasks[7].DependsOn) != 2 {
+		t.Fatalf("CreateJob() video depends_on = %#v, want 2 deps", tasks[7].DependsOn)
 	}
 
 	persistedJob, err := store.GetJobByPublicID(context.Background(), job.PublicID)
@@ -100,8 +115,8 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasksByJob() error = %v", err)
 	}
-	if len(persistedTasks) != 6 {
-		t.Fatalf("persisted tasks len = %d, want 6", len(persistedTasks))
+	if len(persistedTasks) != 8 {
+		t.Fatalf("persisted tasks len = %d, want 8", len(persistedTasks))
 	}
 }
 

@@ -125,6 +125,17 @@ func normalizeSpec(spec model.JobSpec) model.JobSpec {
 func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 	return []model.Task{
 		newTask(
+			"segmentation",
+			model.TaskTypeSegmentation,
+			model.ResourceLocalCPU,
+			nil,
+			map[string]any{
+				"article":  spec.Article,
+				"language": spec.Language,
+			},
+			now,
+		),
+		newTask(
 			"outline",
 			model.TaskTypeOutline,
 			model.ResourceLLMText,
@@ -150,12 +161,20 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			"script",
 			model.TaskTypeScript,
 			model.ResourceLLMText,
-			[]string{"outline", "character_sheet"},
+			[]string{"segmentation", "outline", "character_sheet"},
 			map[string]any{
 				"article":  spec.Article,
 				"language": spec.Language,
 				"voice_id": spec.Options.VoiceID,
 			},
+			now,
+		),
+		newTask(
+			"character_image",
+			model.TaskTypeCharacterImage,
+			model.ResourceImageGen,
+			[]string{"character_sheet"},
+			map[string]any{},
 			now,
 		),
 		newTask(
@@ -172,7 +191,7 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			"image",
 			model.TaskTypeImage,
 			model.ResourceImageGen,
-			[]string{"script"},
+			[]string{"script", "character_image"},
 			map[string]any{
 				"image_style": spec.Options.ImageStyle,
 			},

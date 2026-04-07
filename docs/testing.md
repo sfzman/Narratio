@@ -113,8 +113,10 @@ func TestScriptRun(t *testing.T) {
 - [ ] 运行中 task 的 panic 被 recover 后状态置为 failed
 
 ### executor
-- [ ] script executor 正确消费 outline / character_sheet 输出
-- [ ] image executor 在生成失败时回退到 fallback 图片
+- [ ] script executor 正确消费 segmentation / outline / character_sheet 输出
+- [ ] character_image executor 正确消费 character_sheet 输出并落盘 artifact
+- [ ] image executor 正确消费 script / character_image artifact，并按“优先 matched、否则 candidates”把角色参考 prompt 拼进 manifest
+- [ ] image executor 在生成失败时回退到 fallback 图片，并真实写出本地占位图文件
 - [ ] video executor 在输入缺失时返回明确错误
 
 ## FFmpeg 测试策略

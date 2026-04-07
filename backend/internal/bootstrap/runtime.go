@@ -29,6 +29,7 @@ type Runtime struct {
 	DB               *sql.DB
 	Store            *sqlstore.Store
 	TextClient       scriptpipeline.TextClient
+	ImageClient      imagepipeline.Client
 	ExecutorRegistry *scheduler.ExecutorRegistry
 	RunCoordinator   *jobapp.RunCoordinator
 	BackgroundRunner *jobapp.BackgroundRunner
@@ -71,18 +72,44 @@ func LoadRuntime() (*Runtime, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	imageClient, err := buildImageClient(cfg)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	textGenerationConfig := scriptpipeline.TextGenerationConfig{
 		Model: cfg.DashScopeTextModel,
 	}
+	imageGenerationConfig := imagepipeline.GenerationConfig{
+		Model: cfg.DashScopeImageModel,
+	}
 	store := sqlstore.New(db)
 	registry := scheduler.NewExecutorRegistry(map[model.TaskType]scheduler.Executor{
-		model.TaskTypeOutline:        scriptpipeline.NewOutlineExecutorWithClient(textClient, textGenerationConfig),
-		model.TaskTypeCharacterSheet: scriptpipeline.NewCharacterSheetExecutorWithClient(textClient, textGenerationConfig),
-		model.TaskTypeScript:         scriptpipeline.NewScriptExecutorWithClient(textClient, textGenerationConfig),
+		model.TaskTypeSegmentation: scriptpipeline.NewSegmentationExecutor(cfg.WorkspaceDir),
+		model.TaskTypeOutline: scriptpipeline.NewOutlineExecutorWithClient(
+			textClient,
+			textGenerationConfig,
+			cfg.WorkspaceDir,
+		),
+		model.TaskTypeCharacterSheet: scriptpipeline.NewCharacterSheetExecutorWithClient(
+			textClient,
+			textGenerationConfig,
+			cfg.WorkspaceDir,
+		),
+		model.TaskTypeScript: scriptpipeline.NewScriptExecutorWithClient(
+			textClient,
+			textGenerationConfig,
+			cfg.WorkspaceDir,
+		),
+		model.TaskTypeCharacterImage: imagepipeline.NewCharacterImageExecutor(cfg.WorkspaceDir),
 		model.TaskTypeTTS:            ttspipeline.NewExecutor(),
-		model.TaskTypeImage:          imagepipeline.NewExecutor(),
-		model.TaskTypeVideo:          videopipeline.NewExecutor(),
+		model.TaskTypeImage: imagepipeline.NewExecutorWithClient(
+			imageClient,
+			imageGenerationConfig,
+			cfg.WorkspaceDir,
+		),
+		model.TaskTypeVideo: videopipeline.NewExecutor(),
 	})
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)
@@ -95,7 +122,7 @@ func LoadRuntime() (*Runtime, error) {
 		Services: map[string]string{
 			"database":        "ok",
 			"dashscope_text":  textHealthStatus(cfg),
-			"dashscope_image": healthStatus(cfg.DashScopeImageAPIKey != ""),
+			"dashscope_image": imageHealthStatus(cfg),
 			"tts":             healthStatus(cfg.TTSAPIKey != ""),
 		},
 	})
@@ -104,8 +131,11 @@ func LoadRuntime() (*Runtime, error) {
 		"database_driver", cfg.DatabaseDriver,
 		"database_dsn", cfg.DatabaseDSN,
 		"live_text_generation", cfg.EnableLiveTextGeneration,
+		"live_image_generation", cfg.EnableLiveImageGeneration,
 		"dashscope_text_base_url", cfg.DashScopeTextBaseURL,
 		"dashscope_text_model", cfg.DashScopeTextModel,
+		"dashscope_image_base_url", cfg.DashScopeImageBaseURL,
+		"dashscope_image_model", cfg.DashScopeImageModel,
 	)
 
 	return &Runtime{
@@ -113,6 +143,7 @@ func LoadRuntime() (*Runtime, error) {
 		DB:               db,
 		Store:            store,
 		TextClient:       textClient,
+		ImageClient:      imageClient,
 		ExecutorRegistry: registry,
 		RunCoordinator:   runCoordinator,
 		BackgroundRunner: backgroundRunner,
@@ -190,6 +221,7 @@ func loadInitialMigration() (string, error) {
 
 func defaultResourceLimits() map[model.ResourceKey]int {
 	return map[model.ResourceKey]int{
+		model.ResourceLocalCPU:    4,
 		model.ResourceLLMText:     2,
 		model.ResourceTTS:         3,
 		model.ResourceImageGen:    2,
@@ -216,6 +248,17 @@ func textHealthStatus(cfg *config.Config) string {
 	return "configured"
 }
 
+func imageHealthStatus(cfg *config.Config) string {
+	if cfg.DashScopeImageAPIKey == "" {
+		return "not_configured"
+	}
+	if !cfg.EnableLiveImageGeneration {
+		return "configured_but_disabled"
+	}
+
+	return "configured"
+}
+
 func buildTextClient(cfg *config.Config) (scriptpipeline.TextClient, error) {
 	if !cfg.EnableLiveTextGeneration {
 		return nil, nil
@@ -231,6 +274,26 @@ func buildTextClient(cfg *config.Config) (scriptpipeline.TextClient, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build dashscope text client: %w", err)
+	}
+
+	return client, nil
+}
+
+func buildImageClient(cfg *config.Config) (imagepipeline.Client, error) {
+	if !cfg.EnableLiveImageGeneration {
+		return nil, nil
+	}
+	if cfg.DashScopeImageAPIKey == "" {
+		return nil, nil
+	}
+
+	client, err := imagepipeline.NewHTTPClient(
+		cfg.DashScopeImageBaseURL,
+		cfg.DashScopeImageAPIKey,
+		&http.Client{Timeout: 600 * time.Second},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build dashscope image client: %w", err)
 	}
 
 	return client, nil

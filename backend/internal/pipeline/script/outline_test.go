@@ -10,7 +10,8 @@ import (
 func TestOutlineExecutorExecute(t *testing.T) {
 	t.Parallel()
 
-	executor := NewOutlineExecutor()
+	workspaceDir := t.TempDir()
+	executor := NewOutlineExecutorWithClient(nil, TextGenerationConfig{}, workspaceDir)
 	job := model.Job{
 		ID:       1,
 		PublicID: "job_test_outline",
@@ -40,5 +41,23 @@ func TestOutlineExecutorExecute(t *testing.T) {
 	}
 	if got.OutputRef["language"] != "en" {
 		t.Fatalf("language = %#v, want %#v", got.OutputRef["language"], "en")
+	}
+	if got.OutputRef["section_count"] != 5 {
+		t.Fatalf("section_count = %#v, want %#v", got.OutputRef["section_count"], 5)
+	}
+
+	artifact := readJSONArtifact[OutlineOutput](
+		t,
+		workspaceDir,
+		got.OutputRef["artifact_path"].(string),
+	)
+	if len(artifact.PlotStages) != 5 {
+		t.Fatalf("len(plot_stages) = %d, want 5", len(artifact.PlotStages))
+	}
+	if artifact.PlotStages[0].Name != "开端" {
+		t.Fatalf("plot_stages[0].name = %q, want %q", artifact.PlotStages[0].Name, "开端")
+	}
+	if artifact.Mainline == "" {
+		t.Fatal("mainline = empty, want non-empty")
 	}
 }

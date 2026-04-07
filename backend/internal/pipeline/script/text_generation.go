@@ -33,8 +33,30 @@ func generateTextPreview(
 	systemPrompt string,
 	userPrompt string,
 ) (TextResponse, string, error) {
+	response, text, preview, err := generateTextContent(
+		ctx,
+		client,
+		cfg,
+		systemPrompt,
+		userPrompt,
+	)
+	if err != nil {
+		return TextResponse{}, "", err
+	}
+
+	_ = text
+	return response, preview, nil
+}
+
+func generateTextContent(
+	ctx context.Context,
+	client TextClient,
+	cfg TextGenerationConfig,
+	systemPrompt string,
+	userPrompt string,
+) (TextResponse, string, string, error) {
 	if client == nil {
-		return TextResponse{}, "", nil
+		return TextResponse{}, "", "", nil
 	}
 
 	response, err := client.Generate(ctx, TextRequest{
@@ -46,15 +68,15 @@ func generateTextPreview(
 		},
 	})
 	if err != nil {
-		return TextResponse{}, "", err
+		return TextResponse{}, "", "", err
 	}
 
 	text, err := response.FirstText()
 	if err != nil {
-		return TextResponse{}, "", err
+		return TextResponse{}, "", "", err
 	}
 
-	return response, summarizeArticle(text, 120), nil
+	return response, text, summarizeArticle(text, 120), nil
 }
 
 func buildPromptMessages(systemPrompt string, userPrompt string) []ChatMessage {

@@ -12,6 +12,7 @@ var narratioEnvKeys = []string{
 	"DATABASE_DSN",
 	"WORKSPACE_DIR",
 	"ENABLE_LIVE_TEXT_GENERATION",
+	"ENABLE_LIVE_IMAGE_GENERATION",
 	"DASHSCOPE_TEXT_API_KEY",
 	"DASHSCOPE_TEXT_BASE_URL",
 	"DASHSCOPE_TEXT_MODEL",
@@ -41,6 +42,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.EnableLiveTextGeneration {
 		t.Fatal("EnableLiveTextGeneration = true, want false by default")
 	}
+	if cfg.EnableLiveImageGeneration {
+		t.Fatal("EnableLiveImageGeneration = true, want false by default")
+	}
 	if cfg.DashScopeTextBaseURL != "https://coding.dashscope.aliyuncs.com/v1" {
 		t.Fatalf("DashScopeTextBaseURL = %q", cfg.DashScopeTextBaseURL)
 	}
@@ -65,6 +69,22 @@ func TestLoadReadsLiveTextGenerationFlag(t *testing.T) {
 
 	if !cfg.EnableLiveTextGeneration {
 		t.Fatal("EnableLiveTextGeneration = false, want true")
+	}
+}
+
+func TestLoadReadsLiveImageGenerationFlag(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("ENABLE_LIVE_IMAGE_GENERATION", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.EnableLiveImageGeneration {
+		t.Fatal("EnableLiveImageGeneration = false, want true")
 	}
 }
 

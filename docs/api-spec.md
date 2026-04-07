@@ -94,22 +94,22 @@
   "data": {
     "job_id": "job_abc123",
     "status": "running",
-    "progress": 60,
+    "progress": 62,
     "created_at": "2024-01-15T10:30:00Z",
     "updated_at": "2024-01-15T10:31:30Z",
     "tasks": {
-      "total": 6,
+      "total": 8,
       "pending": 1,
-      "ready": 0,
+      "ready": 1,
       "running": 1,
-      "succeeded": 4,
+      "succeeded": 5,
       "failed": 0,
       "cancelled": 0,
       "skipped": 0
     },
     "task_state": {
-      "ready_keys": ["character_sheet"],
-      "running_keys": [],
+      "ready_keys": ["image"],
+      "running_keys": ["tts"],
       "failed_keys": []
     },
     "runtime_hint": "当前 job 正由后台 runner 自动推进，可继续刷新查看进展。",
@@ -159,10 +159,10 @@
     "tasks": [
       {
         "id": 11,
-        "key": "outline",
-        "type": "outline",
+        "key": "segmentation",
+        "type": "segmentation",
         "status": "succeeded",
-        "resource_key": "llm_text",
+        "resource_key": "local_cpu",
         "depends_on": [],
         "attempt": 1,
         "max_attempts": 1,
@@ -170,7 +170,8 @@
           "article": "..."
         },
         "output_ref": {
-          "artifact_path": "jobs/job_abc123/outline.json"
+          "artifact_path": "jobs/job_abc123/segments.json",
+          "segment_count": 12
         },
         "error": null
       }
@@ -178,6 +179,14 @@
   }
 }
 ```
+
+补充语义：
+
+- `output_ref.artifact_path` 始终是相对 `WORKSPACE_DIR` 的路径
+- 对 `segmentation / outline / character_sheet / script / character_image / image`，该路径现在应指向已经真实落盘的 JSON artifact
+- 默认 DAG 里，`script.depends_on = ["segmentation", "outline", "character_sheet"]`
+- 默认 DAG 里，`character_image.depends_on = ["character_sheet"]`
+- 默认 DAG 里，`image.depends_on = ["script", "character_image"]`
 
 ---
 
@@ -275,7 +284,8 @@ Accept-Ranges: bytes
   "version": "dev",
   "services": {
     "database": "ok",
-    "dashscope_text": "configured",
+    "dashscope_text": "configured_but_disabled",
+    "dashscope_image": "configured_but_disabled",
     "tts": "not_configured"
   }
 }
@@ -284,9 +294,10 @@ Accept-Ranges: bytes
 当前实现说明：
 
 - 当前 health 接口反映的是服务 bootstrap 结果和关键配置是否存在
+- 当相关 API Key 已配置但 live 开关未打开时，`dashscope_text` / `dashscope_image` 会返回 `configured_but_disabled`
 - 还没有对 DashScope、TTS、FFmpeg 做真实联通性探测
 
-当前实现说明：
+当前已实现接口：
 
 - `POST /api/v1/jobs` 已实现
 - `GET /api/v1/jobs/:job_id` 已实现，返回 job 状态和 task 聚合统计

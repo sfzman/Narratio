@@ -13,20 +13,23 @@ type OutlineExecutor struct {
 	log              *slog.Logger
 	textClient       TextClient
 	generationConfig TextGenerationConfig
+	artifacts        artifactWriter
 }
 
 func NewOutlineExecutor() *OutlineExecutor {
-	return NewOutlineExecutorWithClient(nil, TextGenerationConfig{})
+	return NewOutlineExecutorWithClient(nil, TextGenerationConfig{}, "")
 }
 
 func NewOutlineExecutorWithClient(
 	textClient TextClient,
 	generationConfig TextGenerationConfig,
+	workspaceDir string,
 ) *OutlineExecutor {
 	return &OutlineExecutor{
 		log:              slog.Default().With("executor", "outline"),
 		textClient:       textClient,
 		generationConfig: normalizeTextGenerationConfig(generationConfig),
+		artifacts:        newArtifactWriter(workspaceDir),
 	}
 }
 
@@ -40,58 +43,22 @@ func (e *OutlineExecutor) Execute(
 	task model.Task,
 	_ map[string]model.Task,
 ) (model.Task, error) {
-	article, err := payloadString(task.Payload, "article")
+	article, language, err := outlinePayload(task)
 	if err != nil {
-		e.log.Error("outline payload invalid",
-			"job_id", job.ID,
-			"job_public_id", job.PublicID,
-			"task_id", task.ID,
-			"task_key", task.Key,
-			"error", err,
-		)
+		e.logPayloadError("outline payload invalid", job, task, err)
 		return task, err
 	}
 
-	language, err := payloadString(task.Payload, "language")
-	if err != nil {
-		e.log.Error("outline payload invalid",
-			"job_id", job.ID,
-			"job_public_id", job.PublicID,
-			"task_id", task.ID,
-			"task_key", task.Key,
-			"error", err,
-		)
-		return task, err
-	}
-
-	summary := summarizeArticle(article, 60)
 	artifactPath := fmt.Sprintf("jobs/%s/outline.json", job.PublicID)
-	systemPrompt, userPrompt := buildOutlinePrompts(article, language)
+	e.logExecutionStart(job, task)
 
-	e.log.Debug("outline execution started",
-		"job_id", job.ID,
-		"job_public_id", job.PublicID,
-		"task_id", task.ID,
-		"task_key", task.Key,
-		"attempt", task.Attempt,
-	)
-
-	response, preview, err := generateTextPreview(
-		ctx,
-		e.textClient,
-		e.generationConfig,
-		systemPrompt,
-		userPrompt,
-	)
+	output, response, preview, err := e.generateOutput(ctx, article, language)
 	if err != nil {
-		e.log.Error("outline text generation failed",
-			"job_id", job.ID,
-			"job_public_id", job.PublicID,
-			"task_id", task.ID,
-			"task_key", task.Key,
-			"error", err,
-		)
+		e.logGenerationError("outline text generation failed", job, task, err)
 		return task, err
+	}
+	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
+		return task, fmt.Errorf("write outline artifact: %w", err)
 	}
 
 	task.OutputRef = map[string]any{
@@ -99,10 +66,94 @@ func (e *OutlineExecutor) Execute(
 		"artifact_path":  artifactPath,
 		"language":       language,
 		"article_length": len([]rune(article)),
-		"summary":        summary,
+		"summary":        summarizeArticle(article, 60),
+		"section_count":  len(output.PlotStages),
 	}
 	appendLLMMetadata(task.OutputRef, response, preview)
+	e.logCompletion(job, task, artifactPath)
 
+	return task, nil
+}
+
+func outlinePayload(task model.Task) (string, string, error) {
+	article, err := payloadString(task.Payload, "article")
+	if err != nil {
+		return "", "", err
+	}
+	language, err := payloadString(task.Payload, "language")
+	if err != nil {
+		return "", "", err
+	}
+
+	return article, language, nil
+}
+
+func (e *OutlineExecutor) generateOutput(
+	ctx context.Context,
+	article string,
+	language string,
+) (OutlineOutput, TextResponse, string, error) {
+	systemPrompt, userPrompt := buildOutlinePrompts(article, language)
+	response, responseText, preview, err := generateTextContent(
+		ctx,
+		e.textClient,
+		e.generationConfig,
+		systemPrompt,
+		userPrompt,
+	)
+	if err != nil {
+		return OutlineOutput{}, TextResponse{}, "", err
+	}
+
+	output, err := buildOutlineOutput(article, responseText)
+	if err != nil {
+		return OutlineOutput{}, TextResponse{}, "", err
+	}
+
+	return output, response, preview, nil
+}
+
+func (e *OutlineExecutor) logPayloadError(
+	message string,
+	job model.Job,
+	task model.Task,
+	err error,
+) {
+	e.log.Error(message,
+		"job_id", job.ID,
+		"job_public_id", job.PublicID,
+		"task_id", task.ID,
+		"task_key", task.Key,
+		"error", err,
+	)
+}
+
+func (e *OutlineExecutor) logExecutionStart(job model.Job, task model.Task) {
+	e.log.Debug("outline execution started",
+		"job_id", job.ID,
+		"job_public_id", job.PublicID,
+		"task_id", task.ID,
+		"task_key", task.Key,
+		"attempt", task.Attempt,
+	)
+}
+
+func (e *OutlineExecutor) logGenerationError(
+	message string,
+	job model.Job,
+	task model.Task,
+	err error,
+) {
+	e.log.Error(message,
+		"job_id", job.ID,
+		"job_public_id", job.PublicID,
+		"task_id", task.ID,
+		"task_key", task.Key,
+		"error", err,
+	)
+}
+
+func (e *OutlineExecutor) logCompletion(job model.Job, task model.Task, artifactPath string) {
 	e.log.Info("outline execution completed",
 		"job_id", job.ID,
 		"job_public_id", job.PublicID,
@@ -110,8 +161,6 @@ func (e *OutlineExecutor) Execute(
 		"task_key", task.Key,
 		"artifact_path", artifactPath,
 	)
-
-	return task, nil
 }
 
 func payloadString(payload map[string]any, key string) (string, error) {

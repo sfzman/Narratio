@@ -12,12 +12,13 @@ func TestPromoteReadyTasks(t *testing.T) {
 	t.Parallel()
 
 	tasks := []model.Task{
+		{Key: "segmentation", Status: model.TaskStatusSucceeded},
 		{Key: "outline", Status: model.TaskStatusSucceeded},
 		{Key: "character_sheet", Status: model.TaskStatusSucceeded},
 		{
 			Key:       "script",
 			Status:    model.TaskStatusPending,
-			DependsOn: []string{"outline", "character_sheet"},
+			DependsOn: []string{"segmentation", "outline", "character_sheet"},
 		},
 		{
 			Key:       "video",
@@ -28,11 +29,11 @@ func TestPromoteReadyTasks(t *testing.T) {
 
 	got := PromoteReadyTasks(tasks)
 
-	if got[2].Status != model.TaskStatusReady {
-		t.Fatalf("script status = %q, want %q", got[2].Status, model.TaskStatusReady)
+	if got[3].Status != model.TaskStatusReady {
+		t.Fatalf("script status = %q, want %q", got[3].Status, model.TaskStatusReady)
 	}
-	if got[3].Status != model.TaskStatusPending {
-		t.Fatalf("video status = %q, want %q", got[3].Status, model.TaskStatusPending)
+	if got[4].Status != model.TaskStatusPending {
+		t.Fatalf("video status = %q, want %q", got[4].Status, model.TaskStatusPending)
 	}
 }
 

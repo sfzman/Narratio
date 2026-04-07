@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type CreateJobRequest = {
   article: string;
@@ -107,6 +107,15 @@ const apiBaseUrl = (
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api/v1"
 ).replace(/\/$/, "");
 
+const taskOrder: Record<string, number> = {
+  outline: 1,
+  character_sheet: 2,
+  script: 3,
+  tts: 4,
+  image: 5,
+  video: 6,
+};
+
 function App() {
   const [request, setRequest] = useState<CreateJobRequest>(defaultRequest);
   const [jobId, setJobId] = useState("");
@@ -115,10 +124,61 @@ function App() {
   const [health, setHealth] = useState<Record<string, string>>({});
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [autoPollingEnabled, setAutoPollingEnabled] = useState(true);
+  const [autoPollingActive, setAutoPollingActive] = useState(false);
+  const lastTerminalStatusRef = useRef<string | null>(null);
+  const sortedTasks = [...tasks].sort(compareTaskDetail);
+  const workflowSpotlight = buildWorkflowSpotlight(job);
 
   useEffect(() => {
     void refreshHealth();
   }, []);
+
+  useEffect(() => {
+    if (!jobId || !autoPollingEnabled) {
+      setAutoPollingActive(false);
+      return;
+    }
+
+    if (job && isTerminalStatus(job.status)) {
+      setAutoPollingActive(false);
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      setAutoPollingActive(true);
+      await refreshJob(jobId, { silent: true, syncTasks: true });
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      setAutoPollingActive(false);
+    };
+  }, [jobId, autoPollingEnabled, job?.status]);
+
+  useEffect(() => {
+    if (!job || !isTerminalStatus(job.status)) {
+      lastTerminalStatusRef.current = null;
+      return;
+    }
+    if (lastTerminalStatusRef.current === job.status) {
+      return;
+    }
+
+    lastTerminalStatusRef.current = job.status;
+    appendLog("success", `job ${job.job_id} 已进入终态：${job.status}`);
+  }, [job]);
 
   function appendLog(tone: LogEntry["tone"], message: string) {
     const timestamp = new Date().toLocaleTimeString("zh-CN", {
@@ -175,7 +235,7 @@ function App() {
       setTasks([]);
       setJob(null);
       appendLog("success", `已创建 job ${data.job_id}`);
-      await refreshJob(data.job_id);
+      await refreshJob(data.job_id, { syncTasks: true });
     } catch (error) {
       appendLog("error", `创建任务失败：${formatError(error)}`);
     } finally {
@@ -183,43 +243,69 @@ function App() {
     }
   }
 
-  async function refreshJob(id = jobId) {
+  async function refreshJob(
+    id = jobId,
+    options?: { silent?: boolean; syncTasks?: boolean },
+  ) {
     if (!id) {
-      appendLog("error", "请先创建或输入 job_id");
+      if (!options?.silent) {
+        appendLog("error", "请先创建或输入 job_id");
+      }
       return;
     }
 
-    setBusy("refresh");
+    if (!options?.silent) {
+      setBusy("refresh");
+    }
     try {
       const data = await requestJSON<JobStatusResponse>(`/jobs/${id}`);
       setJob(data);
       setJobId(data.job_id);
-      appendLog("info", `已刷新 job ${data.job_id}，状态 ${data.status}`);
-      if (data.runtime_hint) {
+      if (!options?.silent) {
+        appendLog("info", `已刷新 job ${data.job_id}，状态 ${data.status}`);
+      }
+      if (data.runtime_hint && !options?.silent) {
         appendLog("info", data.runtime_hint);
       }
+      if (options?.syncTasks) {
+        await refreshTasks(data.job_id, { silent: true });
+      }
     } catch (error) {
-      appendLog("error", `刷新任务失败：${formatError(error)}`);
+      if (!options?.silent) {
+        appendLog("error", `刷新任务失败：${formatError(error)}`);
+      }
     } finally {
-      setBusy(null);
+      if (!options?.silent) {
+        setBusy(null);
+      }
     }
   }
 
-  async function refreshTasks() {
-    if (!jobId) {
-      appendLog("error", "请先创建或输入 job_id");
+  async function refreshTasks(id = jobId, options?: { silent?: boolean }) {
+    if (!id) {
+      if (!options?.silent) {
+        appendLog("error", "请先创建或输入 job_id");
+      }
       return;
     }
 
-    setBusy("tasks");
+    if (!options?.silent) {
+      setBusy("tasks");
+    }
     try {
-      const data = await requestJSON<TaskListResponse>(`/jobs/${jobId}/tasks`);
+      const data = await requestJSON<TaskListResponse>(`/jobs/${id}/tasks`);
       setTasks(data.tasks.map(normalizeTaskDetail));
-      appendLog("info", `已读取 ${data.tasks.length} 个 task`);
+      if (!options?.silent) {
+        appendLog("info", `已读取 ${data.tasks.length} 个 task`);
+      }
     } catch (error) {
-      appendLog("error", `读取 task 失败：${formatError(error)}`);
+      if (!options?.silent) {
+        appendLog("error", `读取 task 失败：${formatError(error)}`);
+      }
     } finally {
-      setBusy(null);
+      if (!options?.silent) {
+        setBusy(null);
+      }
     }
   }
 
@@ -240,8 +326,7 @@ function App() {
           ? `已推进 task ${data.executed_task_key}`
           : "当前没有可推进的 ready task",
       );
-      await refreshJob(jobId);
-      await refreshTasks();
+      await refreshJob(jobId, { syncTasks: true });
     } catch (error) {
       appendLog("error", `推进任务失败：${formatError(error)}`);
     } finally {
@@ -262,6 +347,13 @@ function App() {
         <div className="health-strip">
           <span className="health-label">API</span>
           <code>{apiBaseUrl}</code>
+          <span className={`polling-pill ${autoPollingActive ? "active" : "idle"}`}>
+            {autoPollingEnabled
+              ? autoPollingActive
+                ? "自动轮询中"
+                : "自动轮询待命"
+              : "自动轮询关闭"}
+          </span>
           <button onClick={() => void refreshHealth()} type="button">
             刷新健康状态
           </button>
@@ -333,6 +425,14 @@ function App() {
             <span>Job ID</span>
             <input value={jobId} onChange={(event) => setJobId(event.target.value)} />
           </label>
+          <label className="toggle-row">
+            <input
+              checked={autoPollingEnabled}
+              onChange={(event) => setAutoPollingEnabled(event.target.checked)}
+              type="checkbox"
+            />
+            <span>自动轮询 job / tasks</span>
+          </label>
           <div className="button-row">
             <button onClick={() => void refreshJob()} type="button">
               刷新状态
@@ -362,6 +462,15 @@ function App() {
           {job ? (
             <div className="job-card">
               {job.runtime_hint ? <div className="runtime-hint">{job.runtime_hint}</div> : null}
+              {job.error ? (
+                <div className="error-card">
+                  <div className="error-head">
+                    <h3>任务失败</h3>
+                    <span>{job.error.code}</span>
+                  </div>
+                  <p>{job.error.message}</p>
+                </div>
+              ) : null}
               <div className="progress-line">
                 <div className="progress-bar" style={{ width: `${job.progress}%` }} />
               </div>
@@ -395,6 +504,37 @@ function App() {
                   </div>
                 </div>
               ) : null}
+              {workflowSpotlight ? (
+                <div className={`spotlight-card spotlight-${workflowSpotlight.tone}`}>
+                  <div className="spotlight-head">
+                    <h3>{workflowSpotlight.title}</h3>
+                    <span>{workflowSpotlight.label}</span>
+                  </div>
+                  <p>{workflowSpotlight.description}</p>
+                </div>
+              ) : null}
+              {job.result ? (
+                <div className="result-card">
+                  <div className="result-head">
+                    <h3>最终产物</h3>
+                    <span>completed</span>
+                  </div>
+                  <div className="result-grid">
+                    <div>
+                      <span>视频地址</span>
+                      <strong>{job.result.video_url}</strong>
+                    </div>
+                    <div>
+                      <span>时长</span>
+                      <strong>{formatDuration(job.result.duration)}</strong>
+                    </div>
+                    <div>
+                      <span>文件大小</span>
+                      <strong>{formatFileSize(job.result.file_size)}</strong>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <pre className="json-block">{JSON.stringify(job.tasks, null, 2)}</pre>
             </div>
           ) : (
@@ -411,7 +551,7 @@ function App() {
             {tasks.length === 0 ? (
               <div className="empty-state">还没有 task 明细。先创建任务并点击 “拉取 Tasks”。</div>
             ) : (
-              tasks.map((task) => (
+              sortedTasks.map((task) => (
                 <article className="task-card" key={task.id}>
                   <div className="task-topline">
                     <strong>{task.key}</strong>
@@ -423,6 +563,12 @@ function App() {
                   <p className="task-deps">
                     depends_on: {task.depends_on.length > 0 ? task.depends_on.join(", ") : "none"}
                   </p>
+                  {task.error ? (
+                    <div className="task-error">
+                      <strong>{task.error.code}</strong>
+                      <p>{task.error.message}</p>
+                    </div>
+                  ) : null}
                   <details>
                     <summary>payload</summary>
                     <pre className="json-block">{JSON.stringify(task.payload, null, 2)}</pre>
@@ -476,6 +622,35 @@ function formatDate(value: string) {
   }
 }
 
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0s";
+  }
+
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds.toFixed(1)}s`;
+}
+
+function formatFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 function normalizeTaskDetail(task: RawTaskDetail): TaskDetail {
   return {
     ...task,
@@ -483,6 +658,53 @@ function normalizeTaskDetail(task: RawTaskDetail): TaskDetail {
     payload: task.payload ?? {},
     output_ref: task.output_ref ?? {},
   };
+}
+
+function isTerminalStatus(status: string) {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function compareTaskDetail(a: TaskDetail, b: TaskDetail) {
+  const orderA = taskOrder[a.key] ?? Number.MAX_SAFE_INTEGER;
+  const orderB = taskOrder[b.key] ?? Number.MAX_SAFE_INTEGER;
+  if (orderA !== orderB) {
+    return orderA - orderB;
+  }
+
+  return a.id - b.id;
+}
+
+function buildWorkflowSpotlight(job: JobStatusResponse | null) {
+  if (!job?.task_state) {
+    return null;
+  }
+
+  if (job.task_state.failed_keys.length > 0) {
+    return {
+      tone: "failed",
+      title: "失败节点",
+      label: "failed",
+      description: job.task_state.failed_keys.join(", "),
+    };
+  }
+  if (job.task_state.running_keys.length > 0) {
+    return {
+      tone: "running",
+      title: "当前运行中",
+      label: "running",
+      description: job.task_state.running_keys.join(", "),
+    };
+  }
+  if (job.task_state.ready_keys.length > 0) {
+    return {
+      tone: "ready",
+      title: "下一步节点",
+      label: "ready",
+      description: job.task_state.ready_keys.join(", "),
+    };
+  }
+
+  return null;
 }
 
 export default App;
