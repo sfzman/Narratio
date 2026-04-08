@@ -42,7 +42,7 @@ func (e *CharacterSheetExecutor) Execute(
 	task model.Task,
 	_ map[string]model.Task,
 ) (model.Task, error) {
-	article, language, err := characterSheetPayload(task)
+	article, err := articlePayload(task)
 	if err != nil {
 		e.logPayloadError("character sheet payload invalid", job, task, err)
 		return task, err
@@ -51,7 +51,7 @@ func (e *CharacterSheetExecutor) Execute(
 	artifactPath := fmt.Sprintf("jobs/%s/character_sheet.json", job.PublicID)
 	e.logExecutionStart(job, task)
 
-	output, response, preview, err := e.generateOutput(ctx, article, language)
+	output, response, preview, err := e.generateOutput(ctx, article)
 	if err != nil {
 		e.logGenerationError("character sheet text generation failed", job, task, err)
 		return task, err
@@ -63,7 +63,6 @@ func (e *CharacterSheetExecutor) Execute(
 	task.OutputRef = map[string]any{
 		"artifact_type":   "character_sheet",
 		"artifact_path":   artifactPath,
-		"language":        language,
 		"article_length":  len([]rune(article)),
 		"character_count": len(output.Characters),
 	}
@@ -73,25 +72,11 @@ func (e *CharacterSheetExecutor) Execute(
 	return task, nil
 }
 
-func characterSheetPayload(task model.Task) (string, string, error) {
-	article, err := payloadString(task.Payload, "article")
-	if err != nil {
-		return "", "", err
-	}
-	language, err := payloadString(task.Payload, "language")
-	if err != nil {
-		return "", "", err
-	}
-
-	return article, language, nil
-}
-
 func (e *CharacterSheetExecutor) generateOutput(
 	ctx context.Context,
 	article string,
-	language string,
 ) (CharacterSheetOutput, TextResponse, string, error) {
-	systemPrompt, userPrompt := buildCharacterSheetPrompts(article, language)
+	systemPrompt, userPrompt := buildCharacterSheetPrompts(article)
 	response, responseText, preview, err := generateTextContent(
 		ctx,
 		e.textClient,

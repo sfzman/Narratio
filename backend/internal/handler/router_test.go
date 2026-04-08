@@ -133,8 +133,7 @@ func TestCreateJob(t *testing.T) {
 	router := NewRouter(service, nil, nil, nil, HealthStatus{})
 
 	body, err := json.Marshal(map[string]any{
-		"article":  "hello world",
-		"language": "zh",
+		"article": "hello world",
 		"options": map[string]any{
 			"voice_id":    "default",
 			"image_style": "realistic",

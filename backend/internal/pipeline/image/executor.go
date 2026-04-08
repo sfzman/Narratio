@@ -182,6 +182,9 @@ type GeneratedImage struct {
 	IsFallback          bool                      `json:"is_fallback"`
 	Prompt              string                    `json:"prompt"`
 	Summary             string                    `json:"summary"`
+	PromptSourceType    string                    `json:"prompt_source_type"`
+	PromptSourceText    string                    `json:"prompt_source_text,omitempty"`
+	PromptSourceShots   []string                  `json:"prompt_source_shots,omitempty"`
 	GenerationRequestID string                    `json:"generation_request_id,omitempty"`
 	GenerationModel     string                    `json:"generation_model,omitempty"`
 	SourceImageURL      string                    `json:"source_image_url,omitempty"`
@@ -202,10 +205,16 @@ type scriptArtifactOutput struct {
 }
 
 type scriptArtifactSegment struct {
-	Index   int    `json:"index"`
-	Text    string `json:"text"`
-	Script  string `json:"script"`
-	Summary string `json:"summary"`
+	Index   int                  `json:"index"`
+	Text    string               `json:"text"`
+	Script  string               `json:"script"`
+	Summary string               `json:"summary"`
+	Shots   []scriptArtifactShot `json:"shots"`
+}
+
+type scriptArtifactShot struct {
+	Index  int    `json:"index"`
+	Prompt string `json:"prompt"`
 }
 
 func buildImageOutput(
@@ -217,6 +226,7 @@ func buildImageOutput(
 	output := ImageOutput{Images: make([]GeneratedImage, 0, len(scriptOutput.Segments))}
 	references := buildImageCharacterReferences(characterImages)
 	for _, segment := range scriptOutput.Segments {
+		source := resolveSegmentPromptSource(segment)
 		matched := matchSegmentCharacters(segment, references)
 		selected, matchedSelected := selectPromptCharacters(references, matched)
 		output.Images = append(output.Images, GeneratedImage{
@@ -225,8 +235,11 @@ func buildImageOutput(
 			Width:               defaultImageWidth,
 			Height:              defaultImageHeight,
 			IsFallback:          true,
-			Prompt:              buildSegmentImagePrompt(segment, imageStyle, selected, matchedSelected),
+			Prompt:              buildSegmentImagePrompt(source.Text, imageStyle, selected, matchedSelected),
 			Summary:             strings.TrimSpace(segment.Summary),
+			PromptSourceType:    source.Type,
+			PromptSourceText:    source.Text,
+			PromptSourceShots:   source.Shots,
 			CharacterReferences: references,
 			MatchedCharacters:   matched,
 		})
@@ -277,12 +290,11 @@ func buildImageCharacterReferences(
 }
 
 func buildSegmentImagePrompt(
-	segment scriptArtifactSegment,
+	base string,
 	imageStyle string,
 	selected []ImageCharacterReference,
 	matchedSelected bool,
 ) string {
-	base := firstNonEmpty(segment.Summary, segment.Script, segment.Text)
 	parts := []string{strings.TrimSpace(base)}
 	if len(selected) > 0 {
 		label := "candidate characters: "
@@ -323,7 +335,12 @@ func matchSegmentCharacters(
 	references []ImageCharacterReference,
 ) []ImageCharacterReference {
 	searchText := strings.ToLower(
-		strings.Join([]string{segment.Summary, segment.Script, segment.Text}, "\n"),
+		strings.Join([]string{
+			joinShotPrompts(segment.Shots),
+			segment.Summary,
+			segment.Script,
+			segment.Text,
+		}, "\n"),
 	)
 	matched := make([]ImageCharacterReference, 0, len(references))
 	for _, item := range references {
@@ -384,6 +401,52 @@ func joinReferencePrompts(references []ImageCharacterReference) string {
 	}
 
 	return strings.Join(details, " | ")
+}
+
+type segmentPromptSource struct {
+	Type  string
+	Text  string
+	Shots []string
+}
+
+func resolveSegmentPromptSource(segment scriptArtifactSegment) segmentPromptSource {
+	shotPrompts := collectShotPrompts(segment.Shots)
+	if len(shotPrompts) > 0 {
+		return segmentPromptSource{
+			Type:  "shots",
+			Text:  strings.Join(shotPrompts, " | "),
+			Shots: shotPrompts,
+		}
+	}
+
+	if value := strings.TrimSpace(segment.Summary); value != "" {
+		return segmentPromptSource{Type: "summary", Text: value}
+	}
+	if value := strings.TrimSpace(segment.Script); value != "" {
+		return segmentPromptSource{Type: "script", Text: value}
+	}
+	if value := strings.TrimSpace(segment.Text); value != "" {
+		return segmentPromptSource{Type: "text", Text: value}
+	}
+
+	return segmentPromptSource{Type: "empty"}
+}
+
+func joinShotPrompts(shots []scriptArtifactShot) string {
+	return strings.Join(collectShotPrompts(shots), " | ")
+}
+
+func collectShotPrompts(shots []scriptArtifactShot) []string {
+	prompts := make([]string, 0, len(shots))
+	for _, shot := range shots {
+		prompt := strings.TrimSpace(shot.Prompt)
+		if prompt == "" {
+			continue
+		}
+		prompts = append(prompts, prompt)
+	}
+
+	return prompts
 }
 
 func firstNonEmpty(values ...string) string {

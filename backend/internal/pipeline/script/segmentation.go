@@ -30,7 +30,7 @@ func (e *SegmentationExecutor) Execute(
 	task model.Task,
 	_ map[string]model.Task,
 ) (model.Task, error) {
-	article, language, err := outlinePayload(task)
+	article, err := articlePayload(task)
 	if err != nil {
 		e.log.Error("segmentation payload invalid",
 			"job_id", job.ID,
@@ -52,7 +52,6 @@ func (e *SegmentationExecutor) Execute(
 	task.OutputRef = map[string]any{
 		"artifact_type":  "segmentation",
 		"artifact_path":  artifactPath,
-		"language":       language,
 		"article_length": len([]rune(article)),
 		"segment_count":  len(output.Segments),
 	}

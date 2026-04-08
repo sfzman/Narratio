@@ -9,9 +9,9 @@
 
 ---
 
-## 1. DashScope 文本生成 API（OpenAI-compatible mode，脚本优化）
+## 1. DashScope 文本生成 API（OpenAI-compatible mode，文本生成）
 
-**用途**：提炼大纲、生成人物表，并基于既定分段生成朗诵脚本和图像摘要
+**用途**：提炼大纲、生成人物表，并基于既定分段逐段生成分镜化 `script`（每段 `script + 10 shots`）
 
 **Endpoint**：由 `DASHSCOPE_TEXT_BASE_URL` 配置，client 内部拼接 `/chat/completions`
 
@@ -37,11 +37,13 @@ payload := map[string]any{
 
 **响应解析**：取 `choices[0].message.content`，期望返回 JSON 格式（见 pipeline.md Stage 1）
 
-**超时**：30s  
-**重试**：2 次，退避 2s、4s  
+**超时**：当前代码里 DashScope 文本 HTTP client timeout 为 600s；默认后台 runner 还会给单次 `DispatchOnce` 套一层 12 分钟外层 deadline，因此自动跑 job 时，文本 task 当前主要受 600s HTTP timeout 约束  
+**重试**：文档原先约定为 2 次、退避 2s/4s；当前代码尚未接入真实 retry/backoff  
 **限流**：无需客户端限流，依赖 API 本身的速率限制返回 429 时退避
+**当前调用形态**：`outline` / `character_sheet` 当前各调用 1 次；`script` 启用真实文本生成时会按 segment 逐段调用，再汇总写回同一个 `script.json`
+**当前输出预算**：通用文本请求默认 `max_tokens=4096`；`script` executor 当前会把自身最小预算提升到 `8192`
 
-**当前实现状态**：当前仓库的 `script/client.go` 只完成 OpenAI-compatible wire format skeleton；retry/backoff 还未接入真实实现
+**当前实现状态**：当前仓库的 `script/client.go` 已接入 OpenAI-compatible 文本请求；retry/backoff 仍未接入真实实现
 
 **错误码处理**
 

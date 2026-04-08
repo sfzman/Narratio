@@ -22,8 +22,7 @@ func TestOutlineExecutorExecute(t *testing.T) {
 		Type:    model.TaskTypeOutline,
 		Attempt: 1,
 		Payload: map[string]any{
-			"article":  "This is a test article for outline generation.",
-			"language": "en",
+			"article": "This is a test article for outline generation.",
 		},
 		OutputRef: map[string]any{},
 	}
@@ -38,9 +37,6 @@ func TestOutlineExecutorExecute(t *testing.T) {
 	}
 	if got.OutputRef["artifact_path"] != "jobs/job_test_outline/outline.json" {
 		t.Fatalf("artifact_path = %#v, want %#v", got.OutputRef["artifact_path"], "jobs/job_test_outline/outline.json")
-	}
-	if got.OutputRef["language"] != "en" {
-		t.Fatalf("language = %#v, want %#v", got.OutputRef["language"], "en")
 	}
 	if got.OutputRef["section_count"] != 5 {
 		t.Fatalf("section_count = %#v, want %#v", got.OutputRef["section_count"], 5)

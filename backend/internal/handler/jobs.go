@@ -9,9 +9,8 @@ import (
 )
 
 type createJobRequest struct {
-	Article  string              `json:"article"`
-	Language string              `json:"language"`
-	Options  createRenderOptions `json:"options"`
+	Article string              `json:"article"`
+	Options createRenderOptions `json:"options"`
 }
 
 type createRenderOptions struct {
@@ -60,8 +59,7 @@ func validateCreateJobRequest(request createJobRequest) (model.JobSpec, error) {
 	}
 
 	return model.JobSpec{
-		Article:  article,
-		Language: strings.TrimSpace(request.Language),
+		Article: article,
 		Options: model.RenderOptions{
 			VoiceID:    strings.TrimSpace(request.Options.VoiceID),
 			ImageStyle: strings.TrimSpace(request.Options.ImageStyle),

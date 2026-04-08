@@ -29,7 +29,7 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 		Token:     "job_token_scheduler_1",
 		Status:    model.JobStatusQueued,
 		Progress:  0,
-		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Spec:      model.JobSpec{Article: "story"},
 		Warnings:  []string{},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -45,8 +45,7 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 			Attempt:     0,
 			MaxAttempts: 1,
 			Payload: map[string]any{
-				"article":  "story",
-				"language": "zh",
+				"article": "story",
 			},
 			OutputRef: map[string]any{},
 			CreatedAt: now,
@@ -61,8 +60,7 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 			Attempt:     0,
 			MaxAttempts: 1,
 			Payload: map[string]any{
-				"article":  "story",
-				"language": "zh",
+				"article": "story",
 			},
 			OutputRef: map[string]any{},
 			CreatedAt: now,
@@ -77,8 +75,7 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 			Attempt:     0,
 			MaxAttempts: 1,
 			Payload: map[string]any{
-				"article":  "story",
-				"language": "zh",
+				"article": "story",
 			},
 			OutputRef: map[string]any{},
 			CreatedAt: now,
@@ -94,7 +91,6 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 			MaxAttempts: 1,
 			Payload: map[string]any{
 				"article":  "story",
-				"language": "zh",
 				"voice_id": "default",
 			},
 			OutputRef: map[string]any{},
@@ -279,17 +275,30 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	}
 }
 
-func TestDispatchOnceExecutesTTSAfterScript(t *testing.T) {
+func TestDispatchOnceExecutesTTSAfterSegmentation(t *testing.T) {
 	t.Parallel()
 
 	store := newSchedulerTestStore(t)
+	workspaceDir := t.TempDir()
+	if err := writeSchedulerJSONArtifact(
+		workspaceDir,
+		"jobs/job_public_scheduler_tts/segments.json",
+		map[string]any{
+			"segments": []map[string]any{
+				{"index": 0, "text": "第一段"},
+				{"index": 1, "text": "第二段"},
+			},
+		},
+	); err != nil {
+		t.Fatalf("WriteJSON(segmentation) error = %v", err)
+	}
 	now := time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC)
 	job := model.Job{
 		PublicID:  "job_public_scheduler_tts",
 		Token:     "job_token_scheduler_tts",
 		Status:    model.JobStatusQueued,
 		Progress:  0,
-		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Spec:      model.JobSpec{Article: "story"},
 		Warnings:  []string{},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -297,21 +306,20 @@ func TestDispatchOnceExecutesTTSAfterScript(t *testing.T) {
 
 	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
 		{
-			Key:         "script",
-			Type:        model.TaskTypeScript,
+			Key:         "segmentation",
+			Type:        model.TaskTypeSegmentation,
 			Status:      model.TaskStatusSucceeded,
-			ResourceKey: model.ResourceLLMText,
+			ResourceKey: model.ResourceLocalCPU,
 			DependsOn:   []string{},
 			Attempt:     1,
 			MaxAttempts: 1,
 			Payload: map[string]any{
-				"article":  "story",
-				"language": "zh",
-				"voice_id": "default",
+				"article": "story",
 			},
 			OutputRef: map[string]any{
-				"artifact_type": "script",
-				"artifact_path": "jobs/job_public_scheduler_tts/script.json",
+				"artifact_type": "segmentation",
+				"artifact_path": "jobs/job_public_scheduler_tts/segments.json",
+				"segment_count": 2,
 			},
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -321,7 +329,7 @@ func TestDispatchOnceExecutesTTSAfterScript(t *testing.T) {
 			Type:        model.TaskTypeTTS,
 			Status:      model.TaskStatusPending,
 			ResourceKey: model.ResourceTTS,
-			DependsOn:   []string{"script"},
+			DependsOn:   []string{"segmentation"},
 			Attempt:     0,
 			MaxAttempts: 1,
 			Payload: map[string]any{
@@ -337,7 +345,7 @@ func TestDispatchOnceExecutesTTSAfterScript(t *testing.T) {
 	}
 
 	registry := NewExecutorRegistry(map[model.TaskType]Executor{
-		model.TaskTypeTTS: ttspipeline.NewExecutor(),
+		model.TaskTypeTTS: ttspipeline.NewExecutor(workspaceDir),
 	})
 
 	service := NewService(
@@ -380,8 +388,8 @@ func TestDispatchOnceExecutesTTSAfterScript(t *testing.T) {
 	if persistedTasks[1].OutputRef["artifact_type"] != "tts" {
 		t.Fatalf("tts output_ref = %#v", persistedTasks[1].OutputRef)
 	}
-	if persistedTasks[1].OutputRef["script_artifact_ref"] != "jobs/job_public_scheduler_tts/script.json" {
-		t.Fatalf("tts script ref = %#v", persistedTasks[1].OutputRef["script_artifact_ref"])
+	if persistedTasks[1].OutputRef["segmentation_artifact_ref"] != "jobs/job_public_scheduler_tts/segments.json" {
+		t.Fatalf("tts segmentation ref = %#v", persistedTasks[1].OutputRef["segmentation_artifact_ref"])
 	}
 }
 
@@ -428,7 +436,7 @@ func TestDispatchOnceExecutesImageAfterScript(t *testing.T) {
 		Token:     "job_token_scheduler_image",
 		Status:    model.JobStatusQueued,
 		Progress:  0,
-		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Spec:      model.JobSpec{Article: "story"},
 		Warnings:  []string{},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -445,7 +453,6 @@ func TestDispatchOnceExecutesImageAfterScript(t *testing.T) {
 			MaxAttempts: 1,
 			Payload: map[string]any{
 				"article":  "story",
-				"language": "zh",
 				"voice_id": "default",
 			},
 			OutputRef: map[string]any{
@@ -576,7 +583,7 @@ func TestDispatchOnceExecutesCharacterImageAfterCharacterSheet(t *testing.T) {
 		Token:     "job_token_scheduler_character_image",
 		Status:    model.JobStatusQueued,
 		Progress:  0,
-		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Spec:      model.JobSpec{Article: "story"},
 		Warnings:  []string{},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -592,8 +599,7 @@ func TestDispatchOnceExecutesCharacterImageAfterCharacterSheet(t *testing.T) {
 			Attempt:     1,
 			MaxAttempts: 1,
 			Payload: map[string]any{
-				"article":  "story",
-				"language": "zh",
+				"article": "story",
 			},
 			OutputRef: map[string]any{
 				"artifact_type": "character_sheet",
@@ -710,7 +716,7 @@ func TestDispatchOnceExecutesVideoAndPersistsJobResult(t *testing.T) {
 		Token:     "job_token_scheduler_video",
 		Status:    model.JobStatusQueued,
 		Progress:  0,
-		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Spec:      model.JobSpec{Article: "story"},
 		Warnings:  []string{},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -729,6 +735,8 @@ func TestDispatchOnceExecutesVideoAndPersistsJobResult(t *testing.T) {
 			OutputRef: map[string]any{
 				"artifact_type":          "tts",
 				"artifact_path":          "jobs/job_public_scheduler_video/audio/tts_manifest.json",
+				"segment_count":          1,
+				"audio_segment_paths":    []string{"jobs/job_public_scheduler_video/audio/segment_000.wav"},
 				"total_duration_seconds": 9.5,
 			},
 			CreatedAt: now,
@@ -827,7 +835,7 @@ func TestDispatchOncePersistsFailedTaskAfterExecutionContextTimeout(t *testing.T
 		Token:     "job_token_scheduler_timeout",
 		Status:    model.JobStatusQueued,
 		Progress:  0,
-		Spec:      model.JobSpec{Article: "story", Language: "zh"},
+		Spec:      model.JobSpec{Article: "story"},
 		Warnings:  []string{},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -843,8 +851,7 @@ func TestDispatchOncePersistsFailedTaskAfterExecutionContextTimeout(t *testing.T
 			Attempt:     0,
 			MaxAttempts: 1,
 			Payload: map[string]any{
-				"article":  "story",
-				"language": "zh",
+				"article": "story",
 			},
 			OutputRef: map[string]any{},
 			CreatedAt: now,

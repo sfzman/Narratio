@@ -57,8 +57,25 @@ func TestExecuteBuildsImageOutputRef(t *testing.T) {
 	}
 	if err := writer.WriteJSON("jobs/job_image_123/script.json", scriptArtifactOutput{
 		Segments: []scriptArtifactSegment{
-			{Index: 0, Text: "Lin Qing steps onto the bridge", Script: "Lin Qing walks through the rain", Summary: "night rain on the bridge with Lin Qing"},
-			{Index: 1, Text: "scene text 2", Script: "voice over 2", Summary: "arrival at the inn"},
+			{
+				Index:   0,
+				Text:    "Lin Qing steps onto the bridge",
+				Script:  "Lin Qing walks through the rain",
+				Summary: "legacy bridge summary",
+				Shots: []scriptArtifactShot{
+					{Index: 0, Prompt: "Lin Qing stands on the bridge in the night rain"},
+					{Index: 1, Prompt: "Lantern light reflects on the wet stone path"},
+				},
+			},
+			{
+				Index:   1,
+				Text:    "scene text 2",
+				Script:  "voice over 2",
+				Summary: "legacy inn summary",
+				Shots: []scriptArtifactShot{
+					{Index: 0, Prompt: "A weary traveler arrives at the inn gate at dusk"},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("WriteJSON(script) error = %v", err)
@@ -112,6 +129,15 @@ func TestExecuteBuildsImageOutputRef(t *testing.T) {
 	if artifact.Images[0].Prompt == "" {
 		t.Fatal("artifact.Images[0].Prompt = empty, want non-empty")
 	}
+	if artifact.Images[0].PromptSourceType != "shots" {
+		t.Fatalf("artifact.Images[0].PromptSourceType = %q, want %q", artifact.Images[0].PromptSourceType, "shots")
+	}
+	if len(artifact.Images[0].PromptSourceShots) != 2 {
+		t.Fatalf("len(artifact.Images[0].PromptSourceShots) = %d, want 2", len(artifact.Images[0].PromptSourceShots))
+	}
+	if artifact.Images[0].PromptSourceShots[0] != "Lin Qing stands on the bridge in the night rain" {
+		t.Fatalf("artifact.Images[0].PromptSourceShots[0] = %q", artifact.Images[0].PromptSourceShots[0])
+	}
 	if len(artifact.Images[0].CharacterReferences) != 1 {
 		t.Fatalf("len(artifact.Images[0].CharacterReferences) = %d, want 1", len(artifact.Images[0].CharacterReferences))
 	}
@@ -133,8 +159,20 @@ func TestExecuteBuildsImageOutputRef(t *testing.T) {
 	if got := artifact.Images[0].Prompt; !containsAll(got, []string{"matched characters: Lin Qing / A-Qing", "character reference details: Lin Qing / A-Qing: Lin Qing, white robe, jade pendant, front view", "style: cinematic"}) {
 		t.Fatalf("artifact.Images[0].Prompt = %q, want matched character prompt", got)
 	}
-	if got := artifact.Images[1].Prompt; !containsAll(got, []string{"candidate characters: Lin Qing / A-Qing", "character reference details: Lin Qing / A-Qing: Lin Qing, white robe, jade pendant, front view", "arrival at the inn"}) {
+	if strings.Contains(artifact.Images[0].Prompt, "legacy bridge summary") {
+		t.Fatalf("artifact.Images[0].Prompt = %q, want shots to win over summary", artifact.Images[0].Prompt)
+	}
+	if !strings.Contains(artifact.Images[0].PromptSourceText, "Lantern light reflects on the wet stone path") {
+		t.Fatalf("artifact.Images[0].PromptSourceText = %q, want joined shot prompts", artifact.Images[0].PromptSourceText)
+	}
+	if got := artifact.Images[1].Prompt; !containsAll(got, []string{"candidate characters: Lin Qing / A-Qing", "character reference details: Lin Qing / A-Qing: Lin Qing, white robe, jade pendant, front view", "A weary traveler arrives at the inn gate at dusk"}) {
 		t.Fatalf("artifact.Images[1].Prompt = %q, want fallback candidate prompt", got)
+	}
+	if strings.Contains(artifact.Images[1].Prompt, "legacy inn summary") {
+		t.Fatalf("artifact.Images[1].Prompt = %q, want shots to win over summary", artifact.Images[1].Prompt)
+	}
+	if artifact.Images[1].PromptSourceType != "shots" {
+		t.Fatalf("artifact.Images[1].PromptSourceType = %q, want %q", artifact.Images[1].PromptSourceType, "shots")
 	}
 }
 
@@ -240,7 +278,15 @@ func TestExecuteMatchesCharacterByAliasTerm(t *testing.T) {
 	}
 	if err := writer.WriteJSON("jobs/job_image_alias_123/script.json", scriptArtifactOutput{
 		Segments: []scriptArtifactSegment{
-			{Index: 0, Text: "A-Qing enters the courtyard", Script: "A-Qing keeps silent", Summary: "A-Qing in the courtyard"},
+			{
+				Index:   0,
+				Text:    "A young swordswoman enters the courtyard",
+				Script:  "She keeps silent and studies the room",
+				Summary: "A lone traveler in the courtyard",
+				Shots: []scriptArtifactShot{
+					{Index: 0, Prompt: "A-Qing enters the courtyard under drifting petals"},
+				},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("WriteJSON(script) error = %v", err)
@@ -273,6 +319,35 @@ func TestExecuteMatchesCharacterByAliasTerm(t *testing.T) {
 	}
 	if artifact.Images[0].MatchedCharacters[0].CharacterName != "Lin Qing" {
 		t.Fatalf("artifact.Images[0].MatchedCharacters[0].CharacterName = %q, want %q", artifact.Images[0].MatchedCharacters[0].CharacterName, "Lin Qing")
+	}
+	if artifact.Images[0].PromptSourceType != "shots" {
+		t.Fatalf("artifact.Images[0].PromptSourceType = %q, want %q", artifact.Images[0].PromptSourceType, "shots")
+	}
+}
+
+func TestBuildSegmentImagePromptFallsBackToSummaryWhenShotsMissing(t *testing.T) {
+	t.Parallel()
+
+	source := resolveSegmentPromptSource(
+		scriptArtifactSegment{
+			Index:   0,
+			Text:    "source text",
+			Script:  "narration text",
+			Summary: "summary fallback prompt",
+		},
+	)
+	if source.Type != "summary" {
+		t.Fatalf("source.Type = %q, want %q", source.Type, "summary")
+	}
+
+	prompt := buildSegmentImagePrompt(
+		source.Text,
+		"cinematic",
+		nil,
+		false,
+	)
+	if !strings.Contains(prompt, "summary fallback prompt") {
+		t.Fatalf("prompt = %q, want summary fallback", prompt)
 	}
 }
 

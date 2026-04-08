@@ -33,9 +33,8 @@ handler -> app/jobs -> scheduler -> pipeline executors
 
 ```go
 type JobSpec struct {
-    Article  string
-    Language string
-    Options  RenderOptions
+    Article string
+    Options RenderOptions
 }
 
 type RenderOptions struct {
@@ -146,15 +145,16 @@ MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬
 ```text
 segmentation -----------\
 outline -----------------\
-                          -> script ---------> tts --\
-character_sheet -> character_image -> image ---------> video
-                 \--------> script -------------------/
+character_sheet ----------> script ------------\
+character_sheet ----------> character_image ---> image ---> video
+segmentation -------------> tts ---------------/
 ```
 
 在这个例子里：
 
 - `segmentation`、`outline` 与 `character_sheet` 可并行
 - `script` 只有在三者都成功后才会进入 `ready`
+- `tts` 只依赖 `segmentation`，直接消费原文分段结果
 - `character_image` 依赖 `character_sheet`，用于独立产出人物参考图 artifact
 - `image` 依赖 `script` 和 `character_image`，普通配图与人物参考图在任务层分离
 - `outline` 与 `character_sheet` 依赖 `llm_text`，`segmentation` 依赖 `local_cpu`

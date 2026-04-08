@@ -65,11 +65,19 @@ type ScriptOutput struct {
 	Segments []Segment `json:"segments"`
 }
 
+const defaultShotsPerSegment = 10
+
 type Segment struct {
 	Index   int    `json:"index"`
 	Text    string `json:"text"`
 	Script  string `json:"script"`
-	Summary string `json:"summary"`
+	Summary string `json:"summary,omitempty"`
+	Shots   []Shot `json:"shots"`
+}
+
+type Shot struct {
+	Index  int    `json:"index"`
+	Prompt string `json:"prompt"`
 }
 
 func buildSegmentationOutput(article string) SegmentationOutput {
@@ -136,12 +144,66 @@ func buildScriptOutput(segmentation SegmentationOutput, responseText string) (Sc
 	}
 
 	var output ScriptOutput
-	if err := json.Unmarshal([]byte(responseText), &output); err != nil {
+	if err := unmarshalScriptResponse(responseText, &output); err != nil {
 		return ScriptOutput{}, fmt.Errorf("parse script response: %w", err)
 	}
 
 	normalizeScriptOutput(&output, segmentation)
 	return output, nil
+}
+
+func unmarshalScriptResponse(responseText string, output *ScriptOutput) error {
+	trimmed := strings.TrimSpace(responseText)
+	if err := json.Unmarshal([]byte(trimmed), output); err == nil {
+		return nil
+	} else {
+		payload := extractJSONObject(trimmed)
+		if payload != "" && payload != trimmed {
+			if fallbackErr := json.Unmarshal([]byte(payload), output); fallbackErr == nil {
+				return nil
+			}
+		}
+		return err
+	}
+}
+
+func extractJSONObject(text string) string {
+	start := strings.IndexByte(text, '{')
+	if start < 0 {
+		return ""
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for index := start; index < len(text); index++ {
+		ch := text[index]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case ch == '\\':
+				escaped = true
+			case ch == '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(text[start : index+1])
+			}
+		}
+	}
+
+	return ""
 }
 
 func stubOutlineOutput(article string) OutlineOutput {
@@ -279,22 +341,26 @@ func normalizeSegmentationOutput(output *SegmentationOutput) {
 func normalizeScriptOutput(output *ScriptOutput, segmentation SegmentationOutput) {
 	aligned := make([]Segment, 0, len(segmentation.Segments))
 	for index, source := range segmentation.Segments {
+		defaultSummary := summarizeArticle(source.Text, 120)
 		item := Segment{
 			Index:   index,
 			Text:    strings.TrimSpace(source.Text),
 			Script:  strings.TrimSpace(source.Text),
-			Summary: summarizeArticle(source.Text, 120),
+			Summary: defaultSummary,
+			Shots:   buildDefaultShots(source.Text, defaultSummary),
 		}
 		if index < len(output.Segments) {
 			item.Script = strings.TrimSpace(output.Segments[index].Script)
 			item.Summary = strings.TrimSpace(output.Segments[index].Summary)
+			item.Shots = normalizeShots(output.Segments[index].Shots, source.Text, item.Summary)
 		}
 		if item.Script == "" {
 			item.Script = item.Text
 		}
 		if item.Summary == "" {
-			item.Summary = summarizeArticle(item.Text, 120)
+			item.Summary = defaultSummary
 		}
+		item.Shots = normalizeShots(item.Shots, item.Text, item.Summary)
 		aligned = append(aligned, item)
 	}
 
@@ -316,10 +382,75 @@ func buildStubScriptSegments(segmentation []TextSegment) []Segment {
 			Text:    trimmed,
 			Script:  trimmed,
 			Summary: summarizeArticle(trimmed, 120),
+			Shots:   buildDefaultShots(trimmed, summarizeArticle(trimmed, 120)),
 		})
 	}
 
 	return items
+}
+
+func normalizeShots(shots []Shot, text string, summary string) []Shot {
+	normalized := make([]Shot, 0, defaultShotsPerSegment)
+	for _, shot := range shots {
+		prompt := strings.TrimSpace(shot.Prompt)
+		if prompt == "" {
+			continue
+		}
+		normalized = append(normalized, Shot{
+			Index:  len(normalized),
+			Prompt: prompt,
+		})
+		if len(normalized) == defaultShotsPerSegment {
+			return normalized
+		}
+	}
+
+	fallback := buildDefaultShots(text, summary)
+	for _, shot := range fallback {
+		if len(normalized) == defaultShotsPerSegment {
+			break
+		}
+		normalized = append(normalized, Shot{
+			Index:  len(normalized),
+			Prompt: shot.Prompt,
+		})
+	}
+
+	return normalized
+}
+
+func buildDefaultShots(text string, summary string) []Shot {
+	trimmedText := strings.TrimSpace(text)
+	trimmedSummary := strings.TrimSpace(summary)
+	if trimmedSummary == "" {
+		trimmedSummary = summarizeArticle(trimmedText, 120)
+	}
+
+	units := splitSentences(trimmedText)
+	if len(units) == 0 {
+		if trimmedSummary != "" {
+			units = []string{trimmedSummary}
+		} else if trimmedText != "" {
+			units = []string{trimmedText}
+		}
+	}
+
+	shots := make([]Shot, 0, defaultShotsPerSegment)
+	for index := 0; index < defaultShotsPerSegment; index++ {
+		prompt := trimmedSummary
+		if len(units) > 0 {
+			prompt = strings.TrimSpace(units[index%len(units)])
+		}
+		if prompt == "" {
+			prompt = trimmedText
+		}
+		shots = append(shots, Shot{
+			Index:  index,
+			Prompt: prompt,
+		})
+	}
+
+	return shots
 }
 
 func normalizeStringList(values []string) []string {

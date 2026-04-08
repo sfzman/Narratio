@@ -103,13 +103,13 @@ func LoadRuntime() (*Runtime, error) {
 			cfg.WorkspaceDir,
 		),
 		model.TaskTypeCharacterImage: imagepipeline.NewCharacterImageExecutor(cfg.WorkspaceDir),
-		model.TaskTypeTTS:            ttspipeline.NewExecutor(),
+		model.TaskTypeTTS:            ttspipeline.NewExecutor(cfg.WorkspaceDir),
 		model.TaskTypeImage: imagepipeline.NewExecutorWithClient(
 			imageClient,
 			imageGenerationConfig,
 			cfg.WorkspaceDir,
 		),
-		model.TaskTypeVideo: videopipeline.NewExecutor(),
+		model.TaskTypeVideo: videopipeline.NewExecutor(cfg.WorkspaceDir),
 	})
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)

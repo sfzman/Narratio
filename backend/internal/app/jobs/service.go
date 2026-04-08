@@ -74,7 +74,6 @@ func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job,
 	tasks := buildDefaultWorkflow(normalized, now)
 	s.log.Debug("building default workflow",
 		"task_count", len(tasks),
-		"language", normalized.Language,
 		"voice_id", normalized.Options.VoiceID,
 		"image_style", normalized.Options.ImageStyle,
 	)
@@ -105,13 +104,9 @@ func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job,
 
 func normalizeSpec(spec model.JobSpec) model.JobSpec {
 	spec.Article = strings.TrimSpace(spec.Article)
-	spec.Language = strings.TrimSpace(spec.Language)
 	spec.Options.VoiceID = strings.TrimSpace(spec.Options.VoiceID)
 	spec.Options.ImageStyle = strings.TrimSpace(spec.Options.ImageStyle)
 
-	if spec.Language == "" {
-		spec.Language = "zh"
-	}
 	if spec.Options.VoiceID == "" {
 		spec.Options.VoiceID = "default"
 	}
@@ -130,8 +125,7 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			model.ResourceLocalCPU,
 			nil,
 			map[string]any{
-				"article":  spec.Article,
-				"language": spec.Language,
+				"article": spec.Article,
 			},
 			now,
 		),
@@ -141,8 +135,7 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			model.ResourceLLMText,
 			nil,
 			map[string]any{
-				"article":  spec.Article,
-				"language": spec.Language,
+				"article": spec.Article,
 			},
 			now,
 		),
@@ -152,8 +145,7 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			model.ResourceLLMText,
 			nil,
 			map[string]any{
-				"article":  spec.Article,
-				"language": spec.Language,
+				"article": spec.Article,
 			},
 			now,
 		),
@@ -164,7 +156,6 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			[]string{"segmentation", "outline", "character_sheet"},
 			map[string]any{
 				"article":  spec.Article,
-				"language": spec.Language,
 				"voice_id": spec.Options.VoiceID,
 			},
 			now,
@@ -181,7 +172,7 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			"tts",
 			model.TaskTypeTTS,
 			model.ResourceTTS,
-			[]string{"script"},
+			[]string{"segmentation"},
 			map[string]any{
 				"voice_id": spec.Options.VoiceID,
 			},

@@ -6,58 +6,21 @@ import (
 	"strings"
 )
 
-func buildOutlinePrompts(article, language string) (string, string) {
-	if strings.EqualFold(strings.TrimSpace(language), "zh") || strings.TrimSpace(language) == "" {
-		return buildChineseOutlinePrompts(article)
-	}
-
-	systemPrompt := "You are a story analysis assistant for storyboard preparation. Respond with JSON only."
-	userPrompt := fmt.Sprintf(
-		"Language: %s\nTask: produce a storyboard-ready story outline as JSON with story_position, mainline, plot_stages, relationship_state_changes, continuity_notes, and segment_reading_notes.\nArticle:\n%s",
-		language,
-		article,
-	)
-
-	return systemPrompt, userPrompt
+func buildOutlinePrompts(article string) (string, string) {
+	return buildChineseOutlinePrompts(article)
 }
 
-func buildCharacterSheetPrompts(article, language string) (string, string) {
-	if strings.EqualFold(strings.TrimSpace(language), "zh") || strings.TrimSpace(language) == "" {
-		return buildChineseCharacterSheetPrompts(article)
-	}
-
-	systemPrompt := "You are a character sheet assistant for storyboard and reference-image preparation. Respond with JSON only."
-	userPrompt := fmt.Sprintf(
-		"Language: %s\nTask: extract the main characters as JSON for downstream storyboard understanding and reference-image preparation. Each character should include role, identity, motivation, one consolidated appearance field, and a stable reference_subject_type.\nArticle:\n%s",
-		language,
-		article,
-	)
-
-	return systemPrompt, userPrompt
+func buildCharacterSheetPrompts(article string) (string, string) {
+	return buildChineseCharacterSheetPrompts(article)
 }
 
 func buildScriptPrompts(
-	language string,
 	voiceID string,
 	segmentation SegmentationOutput,
 	outline OutlineOutput,
 	characters CharacterSheetOutput,
 ) (string, string) {
-	if strings.EqualFold(strings.TrimSpace(language), "zh") || strings.TrimSpace(language) == "" {
-		return buildChineseScriptPrompts(voiceID, segmentation, outline, characters)
-	}
-
-	systemPrompt := "You rewrite pre-segmented article chunks into narrated scripts. Respond with JSON only."
-	userPrompt := fmt.Sprintf(
-		"Language: %s\nVoiceID: %s\nSegmentationContext:\n%s\nOutlineContext:\n%s\nCharacterContext:\n%s\nTask: keep the provided segment order unchanged, and return JSON with one narration-ready script and one image summary for each input segment.\n",
-		language,
-		voiceID,
-		mustJSONString(segmentation),
-		mustJSONString(outline),
-		mustJSONString(characters),
-	)
-
-	return systemPrompt, userPrompt
+	return buildChineseScriptPrompts(voiceID, segmentation, outline, characters)
 }
 
 func buildChineseOutlinePrompts(article string) (string, string) {
@@ -161,38 +124,48 @@ func buildChineseScriptPrompts(
 	outline OutlineOutput,
 	characters CharacterSheetOutput,
 ) (string, string) {
-	systemPrompt := `你是一名中文旁白脚本整理助手，服务目标是后续 TTS、配图和视频合成。
+	systemPrompt := `你是一名中文分镜脚本生成助手，服务目标是为当前 segment 生成可直接下游消费的 script。
 
-你的唯一任务，是把已经完成分段的小说原文整理成适合朗读的分段旁白脚本。
+你的唯一任务，是基于“当前分段原文”生成这一段的分镜化 script，并补足固定 10 个 shots。
+
+outline 和 character_sheet 只是连续性约束，用来帮助你保持剧情主线、人物身份、关系、状态、场景和关键物品不跑偏；不要把它们重写成总结，不要扩写成新的剧情。
 
 输出目标：
-1. 严格沿用上游已经给定的分段顺序和分段边界，不负责重新分段，不要合并或拆分段落。
-2. 每段都要把对应原文整理成更适合朗读的中文旁白文案，可以更口语化、更顺口，但不能改写事实。
-3. 保留关键情节、关键信息和必要对话，不要为了顺口而删掉重要信息。
-4. 每段补一条简短摘要，直接服务后续配图。
+1. 只处理当前输入的这个 segment，不负责重新分段，不要补写前后段内容。
+2. script 是这一段的解说/旁白主文案，服务后续 TTS 与视频串联；可以更顺口，但不能改变事实。
+3. shots 是这一段的 10 个具体分镜画面描述，服务后续配图；必须和当前 segment 的情节推进一致。
+4. summary 只是过渡兼容字段，保留一句话即可。
 5. 只输出 JSON，不要输出额外说明。
 
 请严格使用以下 JSON 结构：
 {
-  "segments": [
+ "segments": [
     {
       "index": 0,
       "text": "...",
       "script": "...",
-      "summary": "..."
+      "summary": "...",
+      "shots": [
+        {
+          "index": 0,
+          "prompt": "..."
+        }
+      ]
     }
   ]
 }
 
 额外要求：
-1. 返回的 segments 数量必须和上游 segmentation 完全一致，index 必须一一对应。
-2. 不要改写 segment 的 text；该字段只用于回填对应原文分段。
+1. 当前调用只返回 1 个 segment；index 必须与输入 segment 保持一致。
+2. 不要改写 segment 的 text；该字段只用于回填当前原文分段。
 3. script 必须适合 TTS 朗读，语句自然、信息清晰，可适度增加停顿符号，但不要堆砌修辞。
 4. summary 控制在一句话内，聚焦这一段最适合画面的动作、情绪或场景信息。
-5. 要参考 outline 和 character_sheet，保证人物身份、关系、状态和剧情连续性不跑偏。
-6. voice_id 仅作为语气参考，不改变剧情内容。`
+5. shots 必须固定输出 10 个，index 为 0 到 9；每个 prompt 直接描述一个可出图的具体分镜画面。
+6. 10 个 shots 要覆盖这一段内部的动作推进、场景变化和情绪节奏，不能只重复同一句摘要。
+7. 必须参考 outline 和 character_sheet，保证人物身份、关系、状态、场景连续性和信息差不跑偏。
+8. voice_id 仅作为语气参考，不改变剧情内容，不新增原文没有发生的事件。`
 	userPrompt := fmt.Sprintf(
-		"下面请基于提供的上下文，为已经切好的小说分段生成中文旁白脚本。\n\n【VoiceID】%s\n\n【分段结果开始】\n%s\n【分段结果结束】\n\n【完整故事大纲开始】\n%s\n【完整故事大纲结束】\n\n【主要人物表开始】\n%s\n【主要人物表结束】",
+		"下面请基于提供的上下文，只为当前这一个 segment 生成分镜 script。\n\n【VoiceID】%s\n\n【当前分段开始】\n%s\n【当前分段结束】\n\n【剧情大纲上下文开始】\n%s\n【剧情大纲上下文结束】\n\n【人物设定上下文开始】\n%s\n【人物设定上下文结束】",
 		voiceID,
 		mustJSONString(segmentation),
 		mustJSONString(outline),

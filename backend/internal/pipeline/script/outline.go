@@ -43,7 +43,7 @@ func (e *OutlineExecutor) Execute(
 	task model.Task,
 	_ map[string]model.Task,
 ) (model.Task, error) {
-	article, language, err := outlinePayload(task)
+	article, err := articlePayload(task)
 	if err != nil {
 		e.logPayloadError("outline payload invalid", job, task, err)
 		return task, err
@@ -52,7 +52,7 @@ func (e *OutlineExecutor) Execute(
 	artifactPath := fmt.Sprintf("jobs/%s/outline.json", job.PublicID)
 	e.logExecutionStart(job, task)
 
-	output, response, preview, err := e.generateOutput(ctx, article, language)
+	output, response, preview, err := e.generateOutput(ctx, article)
 	if err != nil {
 		e.logGenerationError("outline text generation failed", job, task, err)
 		return task, err
@@ -64,7 +64,6 @@ func (e *OutlineExecutor) Execute(
 	task.OutputRef = map[string]any{
 		"artifact_type":  "outline",
 		"artifact_path":  artifactPath,
-		"language":       language,
 		"article_length": len([]rune(article)),
 		"summary":        summarizeArticle(article, 60),
 		"section_count":  len(output.PlotStages),
@@ -75,25 +74,20 @@ func (e *OutlineExecutor) Execute(
 	return task, nil
 }
 
-func outlinePayload(task model.Task) (string, string, error) {
+func articlePayload(task model.Task) (string, error) {
 	article, err := payloadString(task.Payload, "article")
 	if err != nil {
-		return "", "", err
-	}
-	language, err := payloadString(task.Payload, "language")
-	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
-	return article, language, nil
+	return article, nil
 }
 
 func (e *OutlineExecutor) generateOutput(
 	ctx context.Context,
 	article string,
-	language string,
 ) (OutlineOutput, TextResponse, string, error) {
-	systemPrompt, userPrompt := buildOutlinePrompts(article, language)
+	systemPrompt, userPrompt := buildOutlinePrompts(article)
 	response, responseText, preview, err := generateTextContent(
 		ctx,
 		e.textClient,

@@ -18,6 +18,8 @@ type ScriptExecutor struct {
 	artifacts        artifactWriter
 }
 
+const defaultScriptMaxTokens = 8192
+
 func NewScriptExecutor() *ScriptExecutor {
 	return NewScriptExecutorWithClient(nil, TextGenerationConfig{}, "")
 }
@@ -27,10 +29,11 @@ func NewScriptExecutorWithClient(
 	generationConfig TextGenerationConfig,
 	workspaceDir string,
 ) *ScriptExecutor {
+	generationConfig = normalizeScriptGenerationConfig(generationConfig)
 	return &ScriptExecutor{
 		log:              slog.Default().With("executor", "script"),
 		textClient:       textClient,
-		generationConfig: normalizeTextGenerationConfig(generationConfig),
+		generationConfig: generationConfig,
 		artifacts:        newArtifactWriter(workspaceDir),
 	}
 }
@@ -45,7 +48,7 @@ func (e *ScriptExecutor) Execute(
 	task model.Task,
 	dependencies map[string]model.Task,
 ) (model.Task, error) {
-	article, language, voiceID, err := scriptPayload(task)
+	article, voiceID, err := scriptPayload(task)
 	if err != nil {
 		e.logPayloadError("script payload invalid", job, task, err)
 		return task, err
@@ -69,7 +72,6 @@ func (e *ScriptExecutor) Execute(
 
 	output, response, preview, err := e.generateOutput(
 		ctx,
-		language,
 		voiceID,
 		segmentation,
 		outline,
@@ -99,21 +101,17 @@ func (e *ScriptExecutor) Execute(
 	return task, nil
 }
 
-func scriptPayload(task model.Task) (string, string, string, error) {
+func scriptPayload(task model.Task) (string, string, error) {
 	article, err := payloadString(task.Payload, "article")
 	if err != nil {
-		return "", "", "", err
-	}
-	language, err := payloadString(task.Payload, "language")
-	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 	voiceID, err := payloadString(task.Payload, "voice_id")
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
-	return article, language, voiceID, nil
+	return article, voiceID, nil
 }
 
 func requiredDependency(
@@ -130,7 +128,6 @@ func requiredDependency(
 
 func (e *ScriptExecutor) generateOutput(
 	ctx context.Context,
-	language string,
 	voiceID string,
 	segmentationTask model.Task,
 	outlineTask model.Task,
@@ -158,24 +155,82 @@ func (e *ScriptExecutor) generateOutput(
 		return ScriptOutput{}, TextResponse{}, "", fmt.Errorf("load character sheet artifact: %w", err)
 	}
 
-	systemPrompt, userPrompt := buildScriptPrompts(language, voiceID, segmentation, outline, characters)
-	response, responseText, preview, err := generateTextContent(
-		ctx,
-		e.textClient,
-		e.generationConfig,
-		systemPrompt,
-		userPrompt,
-	)
-	if err != nil {
-		return ScriptOutput{}, TextResponse{}, "", err
+	return e.generateSegmentOutputs(ctx, voiceID, segmentation, outline, characters)
+}
+
+func normalizeScriptGenerationConfig(cfg TextGenerationConfig) TextGenerationConfig {
+	cfg = normalizeTextGenerationConfig(cfg)
+	if cfg.MaxTokens < defaultScriptMaxTokens {
+		cfg.MaxTokens = defaultScriptMaxTokens
 	}
 
-	output, err := buildScriptOutput(segmentation, responseText)
-	if err != nil {
-		return ScriptOutput{}, TextResponse{}, "", err
+	return cfg
+}
+
+func (e *ScriptExecutor) generateSegmentOutputs(
+	ctx context.Context,
+	voiceID string,
+	segmentation SegmentationOutput,
+	outline OutlineOutput,
+	characters CharacterSheetOutput,
+) (ScriptOutput, TextResponse, string, error) {
+	output := ScriptOutput{
+		Segments: make([]Segment, 0, len(segmentation.Segments)),
+	}
+	var metadata TextResponse
+	previews := make([]string, 0, len(segmentation.Segments))
+
+	for _, segment := range segmentation.Segments {
+		singleSegmentation := SegmentationOutput{
+			Segments: []TextSegment{segment},
+		}
+		systemPrompt, userPrompt := buildScriptPrompts(
+			voiceID,
+			singleSegmentation,
+			outline,
+			characters,
+		)
+		response, responseText, preview, err := generateTextContent(
+			ctx,
+			e.textClient,
+			e.generationConfig,
+			systemPrompt,
+			userPrompt,
+		)
+		if err != nil {
+			return ScriptOutput{}, TextResponse{}, "", err
+		}
+
+		segmentOutput, err := buildScriptOutput(singleSegmentation, responseText)
+		if err != nil {
+			return ScriptOutput{}, TextResponse{}, "", wrapScriptParseError(err, response)
+		}
+		output.Segments = append(output.Segments, segmentOutput.Segments...)
+
+		if metadata.RequestID == "" {
+			metadata.RequestID = response.RequestID
+		}
+		if metadata.Model == "" {
+			metadata.Model = response.Model
+		}
+		if preview != "" {
+			previews = append(previews, fmt.Sprintf("segment[%d]: %s", segment.Index, preview))
+		}
 	}
 
-	return output, response, preview, nil
+	normalizeScriptOutput(&output, segmentation)
+	return output, metadata, strings.Join(previews, "\n"), nil
+}
+
+func wrapScriptParseError(err error, response TextResponse) error {
+	if finishReason := response.FirstFinishReason(); finishReason == "length" {
+		return fmt.Errorf(
+			"%w; model output stopped with finish_reason=length, consider increasing script output budget",
+			err,
+		)
+	}
+
+	return err
 }
 
 func loadArtifactJSON[T any](workspaceDir string, ref any) (T, error) {

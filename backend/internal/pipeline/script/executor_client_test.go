@@ -10,15 +10,23 @@ import (
 )
 
 type fakeTextClient struct {
-	request  TextRequest
-	response TextResponse
-	err      error
+	request   TextRequest
+	requests  []TextRequest
+	response  TextResponse
+	responses []TextResponse
+	err       error
 }
 
 func (f *fakeTextClient) Generate(_ context.Context, request TextRequest) (TextResponse, error) {
 	f.request = request
+	f.requests = append(f.requests, request)
 	if f.err != nil {
 		return TextResponse{}, f.err
+	}
+	if len(f.responses) > 0 {
+		response := f.responses[0]
+		f.responses = f.responses[1:]
+		return response, nil
 	}
 
 	return f.response, nil
@@ -52,8 +60,7 @@ func TestOutlineExecutorExecuteWithInjectedTextClient(t *testing.T) {
 		Type:    model.TaskTypeOutline,
 		Attempt: 1,
 		Payload: map[string]any{
-			"article":  "This is a test article for outline generation.",
-			"language": "zh",
+			"article": "This is a test article for outline generation.",
 		},
 		OutputRef: map[string]any{},
 	}
@@ -117,14 +124,28 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	workspaceDir := t.TempDir()
 	writer := newArtifactWriter(workspaceDir)
 	client := &fakeTextClient{
-		response: TextResponse{
-			RequestID: "req_script_1",
-			Model:     "qwen-plus",
-			Choices: []Choice{
-				{
-					Message: ChatMessage{
-						Role:    "assistant",
-						Content: `{"segments":[{"text":"第一段原文","script":"第一段旁白。","summary":"主角现身。"},{"text":"第二段原文","script":"第二段旁白。","summary":"冲突升级。"}]}`,
+		responses: []TextResponse{
+			{
+				RequestID: "req_script_1",
+				Model:     "qwen-plus",
+				Choices: []Choice{
+					{
+						Message: ChatMessage{
+							Role:    "assistant",
+							Content: `{"segments":[{"text":"第一段原文","script":"第一段旁白。","summary":"主角现身。","shots":[{"index":0,"prompt":"主角在雨夜现身。"},{"index":1,"prompt":"镜头跟随主角前行。"}]}]}`,
+						},
+					},
+				},
+			},
+			{
+				RequestID: "req_script_2",
+				Model:     "qwen-plus",
+				Choices: []Choice{
+					{
+						Message: ChatMessage{
+							Role:    "assistant",
+							Content: `{"segments":[{"text":"第二段原文","script":"第二段旁白。","summary":"冲突升级。","shots":[{"index":0,"prompt":"对手逼近。"}]}]}`,
+						},
 					},
 				},
 			},
@@ -140,7 +161,6 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 		Type: model.TaskTypeScript,
 		Payload: map[string]any{
 			"article":  "A short article for script generation.",
-			"language": "zh",
 			"voice_id": "default",
 		},
 		OutputRef: map[string]any{},
@@ -194,27 +214,46 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if client.request.ResponseFormat == nil || client.request.ResponseFormat.Type != "json_object" {
-		t.Fatalf("response_format = %#v", client.request.ResponseFormat)
+	if len(client.requests) != 2 {
+		t.Fatalf("len(client.requests) = %d, want 2", len(client.requests))
 	}
-	if !strings.Contains(client.request.Messages[0].Content, "中文旁白脚本整理助手") {
-		t.Fatalf("system prompt = %q", client.request.Messages[0].Content)
+	if client.requests[0].ResponseFormat == nil || client.requests[0].ResponseFormat.Type != "json_object" {
+		t.Fatalf("response_format = %#v", client.requests[0].ResponseFormat)
 	}
-	userPrompt := client.request.Messages[1].Content
-	if !strings.Contains(userPrompt, "【分段结果开始】") {
+	if client.requests[0].MaxTokens != defaultScriptMaxTokens {
+		t.Fatalf("max_tokens = %d, want %d", client.requests[0].MaxTokens, defaultScriptMaxTokens)
+	}
+	if !strings.Contains(client.requests[0].Messages[0].Content, "中文分镜脚本生成助手") {
+		t.Fatalf("system prompt = %q", client.requests[0].Messages[0].Content)
+	}
+	userPrompt := client.requests[0].Messages[1].Content
+	if !strings.Contains(userPrompt, "【当前分段开始】") {
 		t.Fatalf("user prompt = %q", userPrompt)
 	}
 	if !strings.Contains(userPrompt, `"text": "第一段原文"`) {
 		t.Fatalf("user prompt = %q", userPrompt)
 	}
-	if !strings.Contains(userPrompt, "【完整故事大纲开始】") {
+	if strings.Contains(userPrompt, `"text": "第二段原文"`) {
+		t.Fatalf("user prompt = %q, want single-segment prompt", userPrompt)
+	}
+	if !strings.Contains(userPrompt, "【剧情大纲上下文开始】") {
 		t.Fatalf("user prompt = %q", userPrompt)
 	}
 	if !strings.Contains(userPrompt, `"mainline": "主角调查真相。"`) {
 		t.Fatalf("user prompt = %q", userPrompt)
 	}
+	if !strings.Contains(userPrompt, "【人物设定上下文开始】") {
+		t.Fatalf("user prompt = %q", userPrompt)
+	}
 	if !strings.Contains(userPrompt, `"name": "阿莲"`) {
 		t.Fatalf("user prompt = %q", userPrompt)
+	}
+	secondPrompt := client.requests[1].Messages[1].Content
+	if !strings.Contains(secondPrompt, `"text": "第二段原文"`) {
+		t.Fatalf("second user prompt = %q", secondPrompt)
+	}
+	if strings.Contains(secondPrompt, `"text": "第一段原文"`) {
+		t.Fatalf("second user prompt = %q, want single-segment prompt", secondPrompt)
 	}
 	if got.OutputRef["llm_request_id"] != "req_script_1" {
 		t.Fatalf("llm_request_id = %#v", got.OutputRef["llm_request_id"])
@@ -237,8 +276,113 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	if artifact.Segments[0].Script != "第一段旁白。" {
 		t.Fatalf("segments[0].script = %q", artifact.Segments[0].Script)
 	}
+	if len(artifact.Segments[0].Shots) != defaultShotsPerSegment {
+		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), defaultShotsPerSegment)
+	}
+	if artifact.Segments[0].Shots[0].Prompt != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0].prompt = %q", artifact.Segments[0].Shots[0].Prompt)
+	}
+	if artifact.Segments[1].Shots[0].Prompt != "对手逼近。" {
+		t.Fatalf("segments[1].shots[0].prompt = %q", artifact.Segments[1].Shots[0].Prompt)
+	}
+	if artifact.Segments[1].Shots[9].Prompt == "" {
+		t.Fatal("segments[1].shots[9].prompt = empty, want fallback-filled shot")
+	}
 	if got.OutputRef["segment_count"] != 2 {
 		t.Fatalf("segment_count = %#v", got.OutputRef["segment_count"])
+	}
+}
+
+func TestScriptExecutorExecuteParsesWrappedJSONResponse(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	writer := newArtifactWriter(workspaceDir)
+	client := &fakeTextClient{
+		response: TextResponse{
+			RequestID: "req_script_wrapped_1",
+			Model:     "qwen-plus",
+			Choices: []Choice{
+				{
+					Message: ChatMessage{
+						Role: "assistant",
+						Content: "```json\n" +
+							`{"segments":[{"text":"第一段原文","script":"第一段旁白。","summary":"主角现身。","shots":[{"index":0,"prompt":"主角在雨夜现身。"}]}]}` +
+							"\n```",
+					},
+				},
+			},
+		},
+	}
+	executor := NewScriptExecutorWithClient(client, TextGenerationConfig{
+		Model: "qwen-plus",
+	}, workspaceDir)
+	job := model.Job{ID: 3, PublicID: "job_script_wrapped_llm"}
+	task := model.Task{
+		ID:   21,
+		Key:  "script",
+		Type: model.TaskTypeScript,
+		Payload: map[string]any{
+			"article":  "A short article for script generation.",
+			"voice_id": "default",
+		},
+		OutputRef: map[string]any{},
+	}
+	dependencies := map[string]model.Task{
+		"segmentation": {
+			Key: "segmentation",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_script_wrapped_llm/segments.json",
+			},
+		},
+		"outline": {
+			Key: "outline",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_script_wrapped_llm/outline.json",
+			},
+		},
+		"character_sheet": {
+			Key: "character_sheet",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_script_wrapped_llm/character_sheet.json",
+			},
+		},
+	}
+	if err := writer.WriteJSON("jobs/job_script_wrapped_llm/segments.json", SegmentationOutput{
+		Segments: []TextSegment{
+			{Index: 0, Text: "第一段原文", CharCount: 5},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(segmentation) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_script_wrapped_llm/outline.json", OutlineOutput{
+		Mainline: "主角调查真相。",
+	}); err != nil {
+		t.Fatalf("WriteJSON(outline) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_script_wrapped_llm/character_sheet.json", CharacterSheetOutput{
+		Characters: []CharacterProfile{
+			{Name: "阿莲", Role: "主角", Appearance: "警惕冷静", ReferenceSubjectType: "人"},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(character_sheet) error = %v", err)
+	}
+
+	got, err := executor.Execute(context.Background(), job, task, dependencies)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	artifact := readJSONArtifact[ScriptOutput](
+		t,
+		workspaceDir,
+		got.OutputRef["artifact_path"].(string),
+	)
+	if len(artifact.Segments) != 1 {
+		t.Fatalf("len(segments) = %d, want 1", len(artifact.Segments))
+	}
+	if artifact.Segments[0].Shots[0].Prompt != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0].prompt = %q", artifact.Segments[0].Shots[0].Prompt)
 	}
 }
 
@@ -256,8 +400,7 @@ func TestOutlineExecutorExecuteReturnsClientError(t *testing.T) {
 		Type:    model.TaskTypeOutline,
 		Attempt: 1,
 		Payload: map[string]any{
-			"article":  "This is a test article for outline generation.",
-			"language": "en",
+			"article": "This is a test article for outline generation.",
 		},
 		OutputRef: map[string]any{},
 	}

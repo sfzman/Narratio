@@ -24,8 +24,7 @@ func TestCreateJobAndGetByPublicID(t *testing.T) {
 		Status:   model.JobStatusQueued,
 		Progress: 5,
 		Spec: model.JobSpec{
-			Article:  "test article",
-			Language: "zh",
+			Article: "test article",
 			Options: model.RenderOptions{
 				VoiceID:    "default",
 				ImageStyle: "realistic",
@@ -72,8 +71,7 @@ func TestCreateTasksAndListByJob(t *testing.T) {
 		Token:    "job_token_2",
 		Status:   model.JobStatusQueued,
 		Spec: model.JobSpec{
-			Article:  "story",
-			Language: "zh",
+			Article: "story",
 		},
 		Warnings:  []string{},
 		CreatedAt: now,
@@ -158,8 +156,7 @@ func TestInitializeJobRollsBackWhenTaskInsertFails(t *testing.T) {
 		Token:    "job_token_3",
 		Status:   model.JobStatusQueued,
 		Spec: model.JobSpec{
-			Article:  "story",
-			Language: "zh",
+			Article: "story",
 		},
 		Warnings:  []string{},
 		CreatedAt: now,

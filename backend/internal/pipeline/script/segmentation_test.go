@@ -21,8 +21,7 @@ func TestSegmentationExecutorExecute(t *testing.T) {
 		Key:  "segmentation",
 		Type: model.TaskTypeSegmentation,
 		Payload: map[string]any{
-			"article":  "第一句。第二句。第三句。",
-			"language": "zh",
+			"article": "第一句。第二句。第三句。",
 		},
 		OutputRef: map[string]any{},
 	}

@@ -19,9 +19,8 @@ type RenderOptions struct {
 }
 
 type JobSpec struct {
-	Article  string        `json:"article"`
-	Language string        `json:"language"`
-	Options  RenderOptions `json:"options"`
+	Article string        `json:"article"`
+	Options RenderOptions `json:"options"`
 }
 
 type JobError struct {

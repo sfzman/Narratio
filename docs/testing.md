@@ -48,7 +48,6 @@ func TestScriptRun(t *testing.T) {
 
     output, err := runner.Run(context.Background(), ScriptInput{
         ArticleText: "测试文章内容",
-        Language:    "zh",
     })
 
     assert.NoError(t, err)
@@ -113,11 +112,14 @@ func TestScriptRun(t *testing.T) {
 - [ ] 运行中 task 的 panic 被 recover 后状态置为 failed
 
 ### executor
-- [ ] script executor 正确消费 segmentation / outline / character_sheet 输出
+- [ ] script executor 正确消费 segmentation / outline / character_sheet 输出，按 segment 调用文本生成，并产出每段 10 个 shot 的 script 结构
+- [ ] tts executor 正确消费 segmentation 输出并落盘 tts manifest / subtitles.srt / 占位 WAV
 - [ ] character_image executor 正确消费 character_sheet 输出并落盘 artifact
 - [ ] image executor 正确消费 script / character_image artifact，并按“优先 matched、否则 candidates”把角色参考 prompt 拼进 manifest
+- [x] image executor 优先从 script 的 shot 级 prompt 消费出图输入；当前仍保留 summary fallback 兼容路径
+- [x] image executor 在 manifest 中记录 prompt source trace，便于联调时确认每段图片实际消费了哪些 shot 文本
 - [ ] image executor 在生成失败时回退到 fallback 图片，并真实写出本地占位图文件
-- [ ] video executor 在输入缺失时返回明确错误
+- [ ] video executor 校验 `tts.segment_count` 与 `audio_segment_paths` / image 数量对齐；在 workspace 模式下再校验 tts/image artifact、WAV / SRT / JPG 依赖文件存在性，并在输入缺失时返回明确错误
 
 ## FFmpeg 测试策略
 

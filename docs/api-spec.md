@@ -50,7 +50,6 @@
 ```json
 {
   "article": "这是一篇文章内容...",
-  "language": "zh",
   "options": {
     "voice_id": "default",
     "image_style": "realistic"
@@ -61,7 +60,6 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | article | string | ✅ | 文章内容，1~10000 字 |
-| language | string | ❌ | 语言，默认 `zh` |
 | options.voice_id | string | ❌ | TTS 音色 ID，默认 `default` |
 | options.image_style | string | ❌ | 图像风格，默认 `realistic` |
 
@@ -82,6 +80,7 @@
 
 - 当前实现会在创建成功后自动启动后台调度
 - 前端不需要再依赖手动点击 `Dispatch Once` 才能推进 job
+- 当前接口不再接收 `language` 字段；整个生成链路默认按中文内容处理
 
 ---
 
@@ -183,8 +182,9 @@
 补充语义：
 
 - `output_ref.artifact_path` 始终是相对 `WORKSPACE_DIR` 的路径
-- 对 `segmentation / outline / character_sheet / script / character_image / image`，该路径现在应指向已经真实落盘的 JSON artifact
+- 对 `segmentation / outline / character_sheet / script / tts / character_image / image`，该路径现在应指向已经真实落盘的 JSON artifact
 - 默认 DAG 里，`script.depends_on = ["segmentation", "outline", "character_sheet"]`
+- 默认 DAG 里，`tts.depends_on = ["segmentation"]`
 - 默认 DAG 里，`character_image.depends_on = ["character_sheet"]`
 - 默认 DAG 里，`image.depends_on = ["script", "character_image"]`
 

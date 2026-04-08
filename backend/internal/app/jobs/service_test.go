@@ -35,8 +35,7 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	service.clock = fixedClock{now: time.Date(2026, 4, 3, 18, 0, 0, 0, time.UTC)}
 
 	job, tasks, err := service.CreateJob(context.Background(), model.JobSpec{
-		Article:  "  hello world  ",
-		Language: "",
+		Article: "  hello world  ",
 		Options: model.RenderOptions{
 			VoiceID:    "",
 			ImageStyle: "",
@@ -51,9 +50,6 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	}
 	if job.Status != model.JobStatusQueued {
 		t.Fatalf("CreateJob() status = %q, want %q", job.Status, model.JobStatusQueued)
-	}
-	if job.Spec.Language != "zh" {
-		t.Fatalf("CreateJob() language = %q, want %q", job.Spec.Language, "zh")
 	}
 	if job.Spec.Options.VoiceID != "default" {
 		t.Fatalf("CreateJob() voice_id = %q, want %q", job.Spec.Options.VoiceID, "default")
@@ -70,9 +66,6 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	}
 	if tasks[0].Payload["article"] != "hello world" {
 		t.Fatalf("CreateJob() segmentation payload article = %#v, want %#v", tasks[0].Payload["article"], "hello world")
-	}
-	if tasks[0].Payload["language"] != "zh" {
-		t.Fatalf("CreateJob() segmentation payload language = %#v, want %#v", tasks[0].Payload["language"], "zh")
 	}
 	if tasks[4].Key != "character_image" {
 		t.Fatalf("CreateJob() task[4].Key = %q, want %q", tasks[4].Key, "character_image")
@@ -95,6 +88,12 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	}
 	if len(tasks[6].DependsOn) != 2 {
 		t.Fatalf("CreateJob() image depends_on = %#v, want 2 deps", tasks[6].DependsOn)
+	}
+	if tasks[5].Key != "tts" {
+		t.Fatalf("CreateJob() task[5].Key = %q, want %q", tasks[5].Key, "tts")
+	}
+	if len(tasks[5].DependsOn) != 1 || tasks[5].DependsOn[0] != "segmentation" {
+		t.Fatalf("CreateJob() tts depends_on = %#v, want [segmentation]", tasks[5].DependsOn)
 	}
 	if tasks[7].Key != "video" {
 		t.Fatalf("CreateJob() task[7].Key = %q, want %q", tasks[7].Key, "video")
@@ -129,8 +128,7 @@ func TestCreateJobEnqueuesBackgroundDispatch(t *testing.T) {
 	service.clock = fixedClock{now: time.Date(2026, 4, 6, 20, 0, 0, 0, time.UTC)}
 
 	job, _, err := service.CreateJob(context.Background(), model.JobSpec{
-		Article:  "hello world",
-		Language: "zh",
+		Article: "hello world",
 		Options: model.RenderOptions{
 			VoiceID:    "default",
 			ImageStyle: "realistic",

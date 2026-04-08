@@ -23,8 +23,7 @@ func TestCharacterSheetExecutorExecute(t *testing.T) {
 		Type:    model.TaskTypeCharacterSheet,
 		Attempt: 1,
 		Payload: map[string]any{
-			"article":  "Alice meets Bob in a test story.",
-			"language": "en",
+			"article": "Alice meets Bob in a test story.",
 		},
 		OutputRef: map[string]any{},
 	}
@@ -91,8 +90,7 @@ func TestCharacterSheetExecutorExecuteWithInjectedTextClient(t *testing.T) {
 		Type:    model.TaskTypeCharacterSheet,
 		Attempt: 1,
 		Payload: map[string]any{
-			"article":  "Alice meets Bob in a test story.",
-			"language": "zh",
+			"article": "Alice meets Bob in a test story.",
 		},
 		OutputRef: map[string]any{},
 	}

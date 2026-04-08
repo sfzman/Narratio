@@ -2,6 +2,7 @@ package script
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -23,7 +24,6 @@ func TestScriptExecutorExecute(t *testing.T) {
 		Type: model.TaskTypeScript,
 		Payload: map[string]any{
 			"article":  "A short article for script generation.",
-			"language": "en",
 			"voice_id": "default",
 		},
 		OutputRef: map[string]any{},
@@ -105,5 +105,38 @@ func TestScriptExecutorExecute(t *testing.T) {
 	}
 	if artifact.Segments[0].Text != "A short article for script generation." {
 		t.Fatalf("segments[0].text = %q", artifact.Segments[0].Text)
+	}
+	if len(artifact.Segments[0].Shots) != defaultShotsPerSegment {
+		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), defaultShotsPerSegment)
+	}
+	if artifact.Segments[0].Shots[0].Prompt == "" {
+		t.Fatal("segments[0].shots[0].prompt = empty, want non-empty")
+	}
+}
+
+func TestBuildScriptOutputExtractsWrappedJSONObject(t *testing.T) {
+	t.Parallel()
+
+	segmentation := SegmentationOutput{
+		Segments: []TextSegment{
+			{Index: 0, Text: "第一段原文", CharCount: 5},
+		},
+	}
+	responseText := strings.Join([]string{
+		"先给你结果：",
+		"```json",
+		`{"segments":[{"text":"第一段原文","script":"第一段旁白。","summary":"主角现身。","shots":[{"index":0,"prompt":"主角在雨夜现身。"}]}]}`,
+		"```",
+	}, "\n")
+
+	output, err := buildScriptOutput(segmentation, responseText)
+	if err != nil {
+		t.Fatalf("buildScriptOutput() error = %v", err)
+	}
+	if len(output.Segments) != 1 {
+		t.Fatalf("len(segments) = %d, want 1", len(output.Segments))
+	}
+	if output.Segments[0].Shots[0].Prompt != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0].prompt = %q", output.Segments[0].Shots[0].Prompt)
 	}
 }

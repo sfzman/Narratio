@@ -99,6 +99,17 @@ func (r TextResponse) FirstText() (string, error) {
 	return "", ErrNoTextContent
 }
 
+func (r TextResponse) FirstFinishReason() string {
+	for _, choice := range r.Choices {
+		reason := strings.TrimSpace(choice.FinishReason)
+		if reason != "" {
+			return reason
+		}
+	}
+
+	return ""
+}
+
 type HTTPTextClient struct {
 	baseURL    string
 	apiKey     string

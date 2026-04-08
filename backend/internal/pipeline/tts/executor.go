@@ -11,17 +11,23 @@ import (
 
 const (
 	defaultSegmentCount   = 1
-	defaultTotalDuration  = 6.5
 	defaultSubtitleFormat = "srt"
 )
 
 type Executor struct {
-	log *slog.Logger
+	log       *slog.Logger
+	artifacts artifactWriter
 }
 
-func NewExecutor() *Executor {
+func NewExecutor(workspaceDir ...string) *Executor {
+	resolvedWorkspaceDir := ""
+	if len(workspaceDir) > 0 {
+		resolvedWorkspaceDir = strings.TrimSpace(workspaceDir[0])
+	}
+
 	return &Executor{
-		log: slog.Default().With("executor", "tts"),
+		log:       slog.Default().With("executor", "tts"),
+		artifacts: newArtifactWriter(resolvedWorkspaceDir),
 	}
 }
 
@@ -43,10 +49,23 @@ func (e *Executor) Execute(
 		return task, err
 	}
 
-	scriptTask, ok := dependencies["script"]
+	segmentationTask, ok := dependencies["segmentation"]
 	if !ok {
-		return task, fmt.Errorf("missing dependency %q", "script")
+		return task, fmt.Errorf("missing dependency %q", "segmentation")
 	}
+	segmentation, err := loadArtifactJSON[segmentationArtifact](
+		e.artifacts.workspaceDir,
+		segmentationTask.OutputRef["artifact_path"],
+	)
+	if err != nil {
+		return task, fmt.Errorf("load segmentation artifact: %w", err)
+	}
+	output := buildTTSOutput(job.PublicID, segmentation)
+	segmentCount := len(output.AudioSegments)
+	if segmentCount == 0 {
+		segmentCount = defaultSegmentCount
+	}
+	subtitleArtifactPath := fmt.Sprintf("jobs/%s/audio/subtitles.srt", job.PublicID)
 
 	e.log.Debug("tts execution started",
 		"job_id", job.ID,
@@ -56,18 +75,27 @@ func (e *Executor) Execute(
 		"attempt", task.Attempt,
 	)
 
+	artifactPath := fmt.Sprintf("jobs/%s/audio/tts_manifest.json", job.PublicID)
+	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
+		return task, fmt.Errorf("write tts artifact: %w", err)
+	}
+	if err := e.artifacts.WriteBytes(subtitleArtifactPath, []byte(buildSRT(output.SubtitleItems))); err != nil {
+		return task, fmt.Errorf("write subtitle artifact: %w", err)
+	}
+	if err := writePlaceholderAudioSegments(e.artifacts, output.AudioSegments); err != nil {
+		return task, fmt.Errorf("write placeholder audio segments: %w", err)
+	}
+
 	task.OutputRef = map[string]any{
-		"artifact_type":         "tts",
-		"artifact_path":         fmt.Sprintf("jobs/%s/audio/tts_manifest.json", job.PublicID),
-		"script_artifact_ref":   scriptTask.OutputRef["artifact_path"],
-		"voice_id":              voiceID,
-		"segment_count":         defaultSegmentCount,
-		"subtitle_format":       defaultSubtitleFormat,
-		"subtitle_artifact_ref": fmt.Sprintf("jobs/%s/audio/subtitles.srt", job.PublicID),
-		"audio_segment_paths": []string{
-			fmt.Sprintf("jobs/%s/audio/segment_000.wav", job.PublicID),
-		},
-		"total_duration_seconds": defaultTotalDuration,
+		"artifact_type":             "tts",
+		"artifact_path":             artifactPath,
+		"segmentation_artifact_ref": segmentationTask.OutputRef["artifact_path"],
+		"voice_id":                  voiceID,
+		"segment_count":             segmentCount,
+		"subtitle_format":           defaultSubtitleFormat,
+		"subtitle_artifact_ref":     subtitleArtifactPath,
+		"audio_segment_paths":       collectAudioSegmentPaths(output.AudioSegments),
+		"total_duration_seconds":    output.TotalDuration,
 	}
 
 	e.log.Info("tts execution completed",

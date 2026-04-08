@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 
 type CreateJobRequest = {
   article: string;
-  language: string;
   options: {
     voice_id: string;
     image_style: string;
@@ -96,7 +95,6 @@ type LogEntry = {
 const defaultRequest: CreateJobRequest = {
   article:
     "暮色落进旧城的屋檐，巷口卖糖画的摊子还亮着一盏小灯。少年提着书箱，在雨后的石板路上慢慢往家走。",
-  language: "zh",
   options: {
     voice_id: "default",
     image_style: "realistic",
@@ -377,15 +375,6 @@ function App() {
             />
           </label>
           <div className="field-row">
-            <label className="field">
-              <span>语言</span>
-              <input
-                value={request.language}
-                onChange={(event) =>
-                  setRequest((current) => ({ ...current, language: event.target.value }))
-                }
-              />
-            </label>
             <label className="field">
               <span>Voice ID</span>
               <input
