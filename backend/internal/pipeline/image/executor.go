@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -12,6 +13,7 @@ import (
 const (
 	defaultImageWidth  = 1280
 	defaultImageHeight = 720
+	maxPromptShots     = 3
 )
 
 type Executor struct {
@@ -181,7 +183,6 @@ type GeneratedImage struct {
 	Height              int                       `json:"height"`
 	IsFallback          bool                      `json:"is_fallback"`
 	Prompt              string                    `json:"prompt"`
-	Summary             string                    `json:"summary"`
 	PromptSourceType    string                    `json:"prompt_source_type"`
 	PromptSourceText    string                    `json:"prompt_source_text,omitempty"`
 	PromptSourceShots   []string                  `json:"prompt_source_shots,omitempty"`
@@ -205,16 +206,18 @@ type scriptArtifactOutput struct {
 }
 
 type scriptArtifactSegment struct {
-	Index   int                  `json:"index"`
-	Text    string               `json:"text"`
-	Script  string               `json:"script"`
-	Summary string               `json:"summary"`
-	Shots   []scriptArtifactShot `json:"shots"`
+	Index int                  `json:"index"`
+	Shots []scriptArtifactShot `json:"shots"`
 }
 
 type scriptArtifactShot struct {
-	Index  int    `json:"index"`
-	Prompt string `json:"prompt"`
+	Index              int      `json:"index"`
+	VisualContent      string   `json:"visual_content,omitempty"`
+	CameraDesign       string   `json:"camera_design,omitempty"`
+	InvolvedCharacters []string `json:"involved_characters,omitempty"`
+	ImagePrompt        string   `json:"image_to_image_prompt,omitempty"`
+	TextPrompt         string   `json:"text_to_image_prompt,omitempty"`
+	Prompt             string   `json:"prompt,omitempty"`
 }
 
 func buildImageOutput(
@@ -226,8 +229,8 @@ func buildImageOutput(
 	output := ImageOutput{Images: make([]GeneratedImage, 0, len(scriptOutput.Segments))}
 	references := buildImageCharacterReferences(characterImages)
 	for _, segment := range scriptOutput.Segments {
-		source := resolveSegmentPromptSource(segment)
 		matched := matchSegmentCharacters(segment, references)
+		source := resolveSegmentPromptSource(segment, matched)
 		selected, matchedSelected := selectPromptCharacters(references, matched)
 		output.Images = append(output.Images, GeneratedImage{
 			SegmentIndex:        segment.Index,
@@ -236,7 +239,6 @@ func buildImageOutput(
 			Height:              defaultImageHeight,
 			IsFallback:          true,
 			Prompt:              buildSegmentImagePrompt(source.Text, imageStyle, selected, matchedSelected),
-			Summary:             strings.TrimSpace(segment.Summary),
 			PromptSourceType:    source.Type,
 			PromptSourceText:    source.Text,
 			PromptSourceShots:   source.Shots,
@@ -334,14 +336,7 @@ func matchSegmentCharacters(
 	segment scriptArtifactSegment,
 	references []ImageCharacterReference,
 ) []ImageCharacterReference {
-	searchText := strings.ToLower(
-		strings.Join([]string{
-			joinShotPrompts(segment.Shots),
-			segment.Summary,
-			segment.Script,
-			segment.Text,
-		}, "\n"),
-	)
+	searchText := strings.ToLower(joinShotMatchText(segment.Shots))
 	matched := make([]ImageCharacterReference, 0, len(references))
 	for _, item := range references {
 		if !referenceMatched(searchText, item) {
@@ -359,17 +354,7 @@ func referenceMatched(searchText string, item ImageCharacterReference) bool {
 		matchTerms = []string{item.CharacterName}
 	}
 
-	for _, term := range matchTerms {
-		trimmed := strings.TrimSpace(term)
-		if trimmed == "" {
-			continue
-		}
-		if strings.Contains(searchText, strings.ToLower(trimmed)) {
-			return true
-		}
-	}
-
-	return false
+	return textMatchesTerms(searchText, matchTerms)
 }
 
 func joinReferenceNames(references []ImageCharacterReference) string {
@@ -409,8 +394,11 @@ type segmentPromptSource struct {
 	Shots []string
 }
 
-func resolveSegmentPromptSource(segment scriptArtifactSegment) segmentPromptSource {
-	shotPrompts := collectShotPrompts(segment.Shots)
+func resolveSegmentPromptSource(
+	segment scriptArtifactSegment,
+	matched []ImageCharacterReference,
+) segmentPromptSource {
+	shotPrompts := selectSegmentShotPrompts(segment.Shots, matched)
 	if len(shotPrompts) > 0 {
 		return segmentPromptSource{
 			Type:  "shots",
@@ -419,27 +407,121 @@ func resolveSegmentPromptSource(segment scriptArtifactSegment) segmentPromptSour
 		}
 	}
 
-	if value := strings.TrimSpace(segment.Summary); value != "" {
-		return segmentPromptSource{Type: "summary", Text: value}
-	}
-	if value := strings.TrimSpace(segment.Script); value != "" {
-		return segmentPromptSource{Type: "script", Text: value}
-	}
-	if value := strings.TrimSpace(segment.Text); value != "" {
-		return segmentPromptSource{Type: "text", Text: value}
+	return segmentPromptSource{Type: "empty"}
+}
+
+func selectSegmentShotPrompts(
+	shots []scriptArtifactShot,
+	matched []ImageCharacterReference,
+) []string {
+	prompts := collectShotPrompts(shots)
+	if len(prompts) <= maxPromptShots {
+		return prompts
 	}
 
-	return segmentPromptSource{Type: "empty"}
+	selected := selectShotIndexes(prompts, matched)
+	result := make([]string, 0, len(selected))
+	for _, index := range selected {
+		if index < 0 || index >= len(prompts) {
+			continue
+		}
+		result = append(result, prompts[index])
+	}
+
+	return result
+}
+
+func selectShotIndexes(
+	prompts []string,
+	matched []ImageCharacterReference,
+) []int {
+	selected := make([]int, 0, maxPromptShots)
+	seen := make(map[int]struct{}, maxPromptShots)
+	appendIndex := func(index int) {
+		if len(selected) == maxPromptShots {
+			return
+		}
+		if index < 0 || index >= len(prompts) {
+			return
+		}
+		if _, ok := seen[index]; ok {
+			return
+		}
+		seen[index] = struct{}{}
+		selected = append(selected, index)
+	}
+
+	for _, index := range matchedShotIndexes(prompts, matched) {
+		appendIndex(index)
+	}
+	for _, index := range coverageShotIndexes(len(prompts)) {
+		appendIndex(index)
+	}
+	for index := range prompts {
+		appendIndex(index)
+	}
+
+	sort.Ints(selected)
+	return selected
+}
+
+func matchedShotIndexes(
+	prompts []string,
+	matched []ImageCharacterReference,
+) []int {
+	terms := buildMatchTermSet(matched)
+	if len(terms) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(prompts))
+	for index, prompt := range prompts {
+		if !textMatchesTerms(prompt, terms) {
+			continue
+		}
+		indexes = append(indexes, index)
+	}
+
+	return indexes
+}
+
+func coverageShotIndexes(total int) []int {
+	if total <= 0 {
+		return nil
+	}
+	if total <= maxPromptShots {
+		indexes := make([]int, 0, total)
+		for index := 0; index < total; index++ {
+			indexes = append(indexes, index)
+		}
+		return indexes
+	}
+
+	return []int{0, total / 2, total - 1}
 }
 
 func joinShotPrompts(shots []scriptArtifactShot) string {
 	return strings.Join(collectShotPrompts(shots), " | ")
 }
 
+func joinShotMatchText(shots []scriptArtifactShot) string {
+	parts := make([]string, 0, len(shots)*2)
+	for _, shot := range shots {
+		if prompt := effectiveShotPrompt(shot); prompt != "" {
+			parts = append(parts, prompt)
+		}
+		if len(shot.InvolvedCharacters) > 0 {
+			parts = append(parts, strings.Join(shot.InvolvedCharacters, " "))
+		}
+	}
+
+	return strings.Join(parts, " | ")
+}
+
 func collectShotPrompts(shots []scriptArtifactShot) []string {
 	prompts := make([]string, 0, len(shots))
 	for _, shot := range shots {
-		prompt := strings.TrimSpace(shot.Prompt)
+		prompt := effectiveShotPrompt(shot)
 		if prompt == "" {
 			continue
 		}
@@ -447,6 +529,42 @@ func collectShotPrompts(shots []scriptArtifactShot) []string {
 	}
 
 	return prompts
+}
+
+func effectiveShotPrompt(shot scriptArtifactShot) string {
+	return firstNonEmpty(
+		strings.TrimSpace(shot.ImagePrompt),
+		strings.TrimSpace(shot.TextPrompt),
+		strings.TrimSpace(shot.Prompt),
+	)
+}
+
+func buildMatchTermSet(references []ImageCharacterReference) []string {
+	terms := make([]string, 0, len(references)*2)
+	for _, item := range references {
+		if len(item.MatchTerms) == 0 {
+			terms = append(terms, item.CharacterName)
+			continue
+		}
+		terms = append(terms, item.MatchTerms...)
+	}
+
+	return terms
+}
+
+func textMatchesTerms(text string, terms []string) bool {
+	searchText := strings.ToLower(text)
+	for _, term := range terms {
+		trimmed := strings.TrimSpace(term)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(searchText, strings.ToLower(trimmed)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func firstNonEmpty(values ...string) string {

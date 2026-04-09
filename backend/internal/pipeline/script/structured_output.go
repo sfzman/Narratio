@@ -68,16 +68,45 @@ type ScriptOutput struct {
 const defaultShotsPerSegment = 10
 
 type Segment struct {
-	Index   int    `json:"index"`
-	Text    string `json:"text"`
-	Script  string `json:"script"`
-	Summary string `json:"summary,omitempty"`
-	Shots   []Shot `json:"shots"`
+	Index int    `json:"index"`
+	Shots []Shot `json:"shots"`
 }
 
 type Shot struct {
-	Index  int    `json:"index"`
-	Prompt string `json:"prompt"`
+	Index              int      `json:"index"`
+	VisualContent      string   `json:"visual_content,omitempty"`
+	CameraDesign       string   `json:"camera_design,omitempty"`
+	InvolvedCharacters []string `json:"involved_characters,omitempty"`
+	ImageToImagePrompt string   `json:"image_to_image_prompt,omitempty"`
+	TextToImagePrompt  string   `json:"text_to_image_prompt,omitempty"`
+	Prompt             string   `json:"-"`
+}
+
+type shotJSON struct {
+	Index              int      `json:"index"`
+	VisualContent      string   `json:"visual_content,omitempty"`
+	CameraDesign       string   `json:"camera_design,omitempty"`
+	InvolvedCharacters []string `json:"involved_characters,omitempty"`
+	ImageToImagePrompt string   `json:"image_to_image_prompt,omitempty"`
+	TextToImagePrompt  string   `json:"text_to_image_prompt,omitempty"`
+	LegacyPrompt       string   `json:"prompt,omitempty"`
+}
+
+func (s *Shot) UnmarshalJSON(data []byte) error {
+	var payload shotJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+
+	s.Index = payload.Index
+	s.VisualContent = payload.VisualContent
+	s.CameraDesign = payload.CameraDesign
+	s.InvolvedCharacters = payload.InvolvedCharacters
+	s.ImageToImagePrompt = payload.ImageToImagePrompt
+	s.TextToImagePrompt = payload.TextToImagePrompt
+	s.Prompt = strings.TrimSpace(payload.LegacyPrompt)
+
+	return nil
 }
 
 func buildSegmentationOutput(article string) SegmentationOutput {
@@ -341,26 +370,25 @@ func normalizeSegmentationOutput(output *SegmentationOutput) {
 func normalizeScriptOutput(output *ScriptOutput, segmentation SegmentationOutput) {
 	aligned := make([]Segment, 0, len(segmentation.Segments))
 	for index, source := range segmentation.Segments {
-		defaultSummary := summarizeArticle(source.Text, 120)
 		item := Segment{
-			Index:   index,
-			Text:    strings.TrimSpace(source.Text),
-			Script:  strings.TrimSpace(source.Text),
-			Summary: defaultSummary,
-			Shots:   buildDefaultShots(source.Text, defaultSummary),
+			Index: source.Index,
+			Shots: buildDefaultShots(
+				source.Text,
+				summarizeArticle(source.Text, 120),
+			),
 		}
 		if index < len(output.Segments) {
-			item.Script = strings.TrimSpace(output.Segments[index].Script)
-			item.Summary = strings.TrimSpace(output.Segments[index].Summary)
-			item.Shots = normalizeShots(output.Segments[index].Shots, source.Text, item.Summary)
+			item.Shots = normalizeShots(
+				output.Segments[index].Shots,
+				source.Text,
+				summarizeArticle(source.Text, 120),
+			)
 		}
-		if item.Script == "" {
-			item.Script = item.Text
-		}
-		if item.Summary == "" {
-			item.Summary = defaultSummary
-		}
-		item.Shots = normalizeShots(item.Shots, item.Text, item.Summary)
+		item.Shots = normalizeShots(
+			item.Shots,
+			source.Text,
+			summarizeArticle(source.Text, 120),
+		)
 		aligned = append(aligned, item)
 	}
 
@@ -372,17 +400,15 @@ func normalizeScriptOutput(output *ScriptOutput, segmentation SegmentationOutput
 
 func buildStubScriptSegments(segmentation []TextSegment) []Segment {
 	items := make([]Segment, 0, len(segmentation))
-	for index, source := range segmentation {
+	for _, source := range segmentation {
 		trimmed := strings.TrimSpace(source.Text)
 		if trimmed == "" {
 			continue
 		}
+		summary := summarizeArticle(trimmed, 120)
 		items = append(items, Segment{
-			Index:   index,
-			Text:    trimmed,
-			Script:  trimmed,
-			Summary: summarizeArticle(trimmed, 120),
-			Shots:   buildDefaultShots(trimmed, summarizeArticle(trimmed, 120)),
+			Index: source.Index,
+			Shots: buildDefaultShots(trimmed, summary),
 		})
 	}
 
@@ -392,14 +418,11 @@ func buildStubScriptSegments(segmentation []TextSegment) []Segment {
 func normalizeShots(shots []Shot, text string, summary string) []Shot {
 	normalized := make([]Shot, 0, defaultShotsPerSegment)
 	for _, shot := range shots {
-		prompt := strings.TrimSpace(shot.Prompt)
-		if prompt == "" {
+		item := normalizeShot(shot, len(normalized), summary)
+		if effectiveShotPrompt(item) == "" {
 			continue
 		}
-		normalized = append(normalized, Shot{
-			Index:  len(normalized),
-			Prompt: prompt,
-		})
+		normalized = append(normalized, item)
 		if len(normalized) == defaultShotsPerSegment {
 			return normalized
 		}
@@ -410,13 +433,38 @@ func normalizeShots(shots []Shot, text string, summary string) []Shot {
 		if len(normalized) == defaultShotsPerSegment {
 			break
 		}
-		normalized = append(normalized, Shot{
-			Index:  len(normalized),
-			Prompt: shot.Prompt,
-		})
+		normalized = append(normalized, normalizeShot(shot, len(normalized), summary))
 	}
 
 	return normalized
+}
+
+func normalizeShot(shot Shot, index int, summary string) Shot {
+	item := Shot{
+		Index:              index,
+		VisualContent:      strings.TrimSpace(shot.VisualContent),
+		CameraDesign:       strings.TrimSpace(shot.CameraDesign),
+		InvolvedCharacters: normalizeCharacterNames(shot.InvolvedCharacters),
+	}
+
+	imagePrompt := strings.TrimSpace(shot.ImageToImagePrompt)
+	textPrompt := strings.TrimSpace(shot.TextToImagePrompt)
+	compatPrompt := strings.TrimSpace(shot.Prompt)
+
+	if len(item.InvolvedCharacters) > 0 {
+		imagePrompt = firstNonEmpty(imagePrompt, compatPrompt, textPrompt)
+		imagePrompt = ensurePromptContainsCharacters(imagePrompt, item.InvolvedCharacters)
+		textPrompt = ""
+	} else {
+		imagePrompt = ""
+		textPrompt = firstNonEmpty(textPrompt, compatPrompt, fallbackShotPrompt(summary))
+	}
+
+	item.ImageToImagePrompt = imagePrompt
+	item.TextToImagePrompt = textPrompt
+	item.Prompt = effectiveShotPrompt(item)
+
+	return item
 }
 
 func buildDefaultShots(text string, summary string) []Shot {
@@ -445,12 +493,89 @@ func buildDefaultShots(text string, summary string) []Shot {
 			prompt = trimmedText
 		}
 		shots = append(shots, Shot{
-			Index:  index,
-			Prompt: prompt,
+			Index:             index,
+			TextToImagePrompt: prompt,
+			Prompt:            prompt,
 		})
 	}
 
 	return shots
+}
+
+func normalizeCharacterNames(values []string) []string {
+	filtered := normalizeStringList(values)
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(filtered))
+	for _, value := range filtered {
+		if isEmptyCharacterMarker(value) {
+			continue
+		}
+		normalized = append(normalized, value)
+	}
+
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	return normalized
+}
+
+func isEmptyCharacterMarker(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == "无" || strings.HasPrefix(trimmed, "无（")
+}
+
+func ensurePromptContainsCharacters(prompt string, characters []string) string {
+	trimmed := strings.TrimSpace(prompt)
+	if len(characters) == 0 {
+		return trimmed
+	}
+
+	missing := make([]string, 0, len(characters))
+	for _, character := range characters {
+		name := strings.TrimSpace(character)
+		if name == "" {
+			continue
+		}
+		if strings.Contains(trimmed, name) {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	if len(missing) == 0 {
+		return trimmed
+	}
+	if trimmed == "" {
+		return strings.Join(missing, "、")
+	}
+
+	return strings.Join(missing, "、") + "，" + trimmed
+}
+
+func effectiveShotPrompt(shot Shot) string {
+	return firstNonEmpty(
+		strings.TrimSpace(shot.ImageToImagePrompt),
+		strings.TrimSpace(shot.TextToImagePrompt),
+		strings.TrimSpace(shot.Prompt),
+	)
+}
+
+func fallbackShotPrompt(summary string) string {
+	return strings.TrimSpace(summary)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+
+	return ""
 }
 
 func normalizeStringList(values []string) []string {

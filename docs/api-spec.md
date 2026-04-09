@@ -182,6 +182,7 @@
 补充语义：
 
 - `output_ref.artifact_path` 始终是相对 `WORKSPACE_DIR` 的路径
+- `script` task 额外会返回 `output_ref.segment_artifact_dir`，指向 `jobs/{job_id}/script`；该目录下会逐段写出 `segment_{index}.json`
 - 对 `segmentation / outline / character_sheet / script / tts / character_image / image`，该路径现在应指向已经真实落盘的 JSON artifact
 - 默认 DAG 里，`script.depends_on = ["segmentation", "outline", "character_sheet"]`
 - 默认 DAG 里，`tts.depends_on = ["segmentation"]`

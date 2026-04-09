@@ -11,7 +11,7 @@
 
 ## 1. DashScope 文本生成 API（OpenAI-compatible mode，文本生成）
 
-**用途**：提炼大纲、生成人物表，并基于既定分段逐段生成分镜化 `script`（每段 `script + 10 shots`）
+**用途**：提炼大纲、生成人物表，并基于既定分段逐段生成分镜化 `script`（每段固定 10 个 shots，核心字段为 `involved_characters / image_to_image_prompt / text_to_image_prompt`）
 
 **Endpoint**：由 `DASHSCOPE_TEXT_BASE_URL` 配置，client 内部拼接 `/chat/completions`
 
@@ -37,7 +37,7 @@ payload := map[string]any{
 
 **响应解析**：取 `choices[0].message.content`，期望返回 JSON 格式（见 pipeline.md Stage 1）
 
-**超时**：当前代码里 DashScope 文本 HTTP client timeout 为 600s；默认后台 runner 还会给单次 `DispatchOnce` 套一层 12 分钟外层 deadline，因此自动跑 job 时，文本 task 当前主要受 600s HTTP timeout 约束  
+**超时**：当前代码里 DashScope 文本 HTTP client timeout 为 600s；其中 `script` task 的执行 deadline 现按 `segment_count * SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 200 秒，其他文本 task 仍默认使用 12 分钟执行 deadline。后台 runner / 开发态手动 dispatch 的外层超时已放宽，不再比 `script` task 更早截断。  
 **重试**：文档原先约定为 2 次、退避 2s/4s；当前代码尚未接入真实 retry/backoff  
 **限流**：无需客户端限流，依赖 API 本身的速率限制返回 429 时退避
 **当前调用形态**：`outline` / `character_sheet` 当前各调用 1 次；`script` 启用真实文本生成时会按 segment 逐段调用，再汇总写回同一个 `script.json`
@@ -92,7 +92,7 @@ payload := map[string]any{
 
 ## 3. DashScope 图像生成 API（原生接口）
 
-**用途**：根据段落摘要生成配图
+**用途**：根据 segment 分镜生成配图，或根据人物表生成 `character_image` 参考图
 
 **Endpoint**：由 `DASHSCOPE_IMAGE_BASE_URL` 配置，走 DashScope 原生多模态接口；当前 POC 对应 Python SDK 的 `dashscope.MultiModalConversation.call(...)`
 
@@ -131,7 +131,7 @@ payload := map[string]any{
 
 **降级策略**：若某段图像生成失败，使用纯色背景图（1280x720，固定颜色 `#1a1a2e`）替代，不阻断视频合成。
 
-**当前实现状态**：当前仓库已接入最小 HTTP client 与 executor 注入；只有显式开启 `ENABLE_LIVE_IMAGE_GENERATION=true` 时才会尝试真实请求。当前真实 smoke 已验证该接口需要使用 `input.messages` + `parameters` 的请求形状。当前真实出图成功后，会把 `request_id`、使用模型和下载源图 URL 回填到 image manifest；若仍走 skeleton 或单段请求失败，也会把本地纯色 fallback JPEG 真实落盘。但仍未补齐多图参考输入。
+**当前实现状态**：当前仓库已接入最小 HTTP client 与 executor 注入；只有显式开启 `ENABLE_LIVE_IMAGE_GENERATION=true` 时才会尝试真实请求。当前真实 smoke 已验证该接口需要使用 `input.messages` + `parameters` 的请求形状。当前真实出图成功后，会把 `request_id`、使用模型和下载源图 URL 回填到 `image` / `character_image` manifest；若仍走 skeleton 或单段请求失败，也会把本地纯色 fallback JPEG 真实落盘。但仍未补齐多图参考输入，也还没有把 `character_image` 作为多图参考一并送入普通 `image` 请求。
 
 ---
 

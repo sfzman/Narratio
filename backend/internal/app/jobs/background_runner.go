@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	defaultDispatchTimeout = 12 * time.Minute
+	defaultDispatchTimeout = 2 * time.Hour
 	defaultMaxDispatchStep = 32
 	defaultQueueSize       = 128
 )

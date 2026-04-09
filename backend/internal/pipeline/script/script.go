@@ -72,6 +72,7 @@ func (e *ScriptExecutor) Execute(
 
 	output, response, preview, err := e.generateOutput(
 		ctx,
+		job.PublicID,
 		voiceID,
 		segmentation,
 		outline,
@@ -88,6 +89,7 @@ func (e *ScriptExecutor) Execute(
 	task.OutputRef = map[string]any{
 		"artifact_type":        "script",
 		"artifact_path":        artifactPath,
+		"segment_artifact_dir": scriptSegmentArtifactDir(job.PublicID),
 		"voice_id":             voiceID,
 		"article_length":       len([]rune(article)),
 		"segmentation_ref":     segmentation.OutputRef["artifact_path"],
@@ -128,6 +130,7 @@ func requiredDependency(
 
 func (e *ScriptExecutor) generateOutput(
 	ctx context.Context,
+	jobPublicID string,
 	voiceID string,
 	segmentationTask model.Task,
 	outlineTask model.Task,
@@ -155,7 +158,14 @@ func (e *ScriptExecutor) generateOutput(
 		return ScriptOutput{}, TextResponse{}, "", fmt.Errorf("load character sheet artifact: %w", err)
 	}
 
-	return e.generateSegmentOutputs(ctx, voiceID, segmentation, outline, characters)
+	return e.generateSegmentOutputs(
+		ctx,
+		jobPublicID,
+		voiceID,
+		segmentation,
+		outline,
+		characters,
+	)
 }
 
 func normalizeScriptGenerationConfig(cfg TextGenerationConfig) TextGenerationConfig {
@@ -169,6 +179,7 @@ func normalizeScriptGenerationConfig(cfg TextGenerationConfig) TextGenerationCon
 
 func (e *ScriptExecutor) generateSegmentOutputs(
 	ctx context.Context,
+	jobPublicID string,
 	voiceID string,
 	segmentation SegmentationOutput,
 	outline OutlineOutput,
@@ -181,31 +192,18 @@ func (e *ScriptExecutor) generateSegmentOutputs(
 	previews := make([]string, 0, len(segmentation.Segments))
 
 	for _, segment := range segmentation.Segments {
-		singleSegmentation := SegmentationOutput{
-			Segments: []TextSegment{segment},
-		}
-		systemPrompt, userPrompt := buildScriptPrompts(
+		segmentOutput, response, preview, reused, err := e.loadOrGenerateSegmentOutput(
+			ctx,
+			jobPublicID,
 			voiceID,
-			singleSegmentation,
+			segment,
 			outline,
 			characters,
-		)
-		response, responseText, preview, err := generateTextContent(
-			ctx,
-			e.textClient,
-			e.generationConfig,
-			systemPrompt,
-			userPrompt,
 		)
 		if err != nil {
 			return ScriptOutput{}, TextResponse{}, "", err
 		}
-
-		segmentOutput, err := buildScriptOutput(singleSegmentation, responseText)
-		if err != nil {
-			return ScriptOutput{}, TextResponse{}, "", wrapScriptParseError(err, response)
-		}
-		output.Segments = append(output.Segments, segmentOutput.Segments...)
+		output.Segments = append(output.Segments, segmentOutput)
 
 		if metadata.RequestID == "" {
 			metadata.RequestID = response.RequestID
@@ -215,6 +213,8 @@ func (e *ScriptExecutor) generateSegmentOutputs(
 		}
 		if preview != "" {
 			previews = append(previews, fmt.Sprintf("segment[%d]: %s", segment.Index, preview))
+		} else if reused {
+			previews = append(previews, fmt.Sprintf("segment[%d]: reused saved artifact", segment.Index))
 		}
 	}
 
@@ -231,6 +231,117 @@ func wrapScriptParseError(err error, response TextResponse) error {
 	}
 
 	return err
+}
+
+func (e *ScriptExecutor) loadOrGenerateSegmentOutput(
+	ctx context.Context,
+	jobPublicID string,
+	voiceID string,
+	segment TextSegment,
+	outline OutlineOutput,
+	characters CharacterSheetOutput,
+) (Segment, TextResponse, string, bool, error) {
+	if saved, ok, err := e.loadSavedSegmentOutput(jobPublicID, segment); err != nil {
+		return Segment{}, TextResponse{}, "", false, err
+	} else if ok {
+		return saved, TextResponse{}, "", true, nil
+	}
+
+	response, output, preview, err := e.generateSingleSegmentOutput(
+		ctx,
+		voiceID,
+		segment,
+		outline,
+		characters,
+	)
+	if err != nil {
+		return Segment{}, TextResponse{}, "", false, err
+	}
+	if err := e.writeSegmentArtifacts(jobPublicID, output); err != nil {
+		return Segment{}, TextResponse{}, "", false, err
+	}
+
+	return output, response, preview, false, nil
+}
+
+func (e *ScriptExecutor) loadSavedSegmentOutput(
+	jobPublicID string,
+	source TextSegment,
+) (Segment, bool, error) {
+	path := scriptSegmentArtifactPath(jobPublicID, source.Index)
+	data, err := os.ReadFile(artifactFullPath(e.artifacts.workspaceDir, path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Segment{}, false, nil
+		}
+		return Segment{}, false, fmt.Errorf("read saved script segment artifact: %w", err)
+	}
+
+	var segment Segment
+	if err := json.Unmarshal(data, &segment); err != nil {
+		e.log.Warn("saved script segment artifact invalid, regenerating",
+			"segment_index", source.Index,
+			"artifact_path", path,
+			"error", err,
+		)
+		return Segment{}, false, nil
+	}
+
+	output := ScriptOutput{Segments: []Segment{segment}}
+	normalizeScriptOutput(&output, SegmentationOutput{Segments: []TextSegment{source}})
+	return output.Segments[0], true, nil
+}
+
+func (e *ScriptExecutor) generateSingleSegmentOutput(
+	ctx context.Context,
+	voiceID string,
+	segment TextSegment,
+	outline OutlineOutput,
+	characters CharacterSheetOutput,
+) (TextResponse, Segment, string, error) {
+	singleSegmentation := SegmentationOutput{Segments: []TextSegment{segment}}
+	systemPrompt, userPrompt := buildScriptPrompts(
+		singleSegmentation,
+		outline,
+		characters,
+	)
+	response, responseText, preview, err := generateTextContent(
+		ctx,
+		e.textClient,
+		e.generationConfig,
+		systemPrompt,
+		userPrompt,
+	)
+	if err != nil {
+		return TextResponse{}, Segment{}, "", err
+	}
+
+	output, err := buildScriptOutput(singleSegmentation, responseText)
+	if err != nil {
+		return TextResponse{}, Segment{}, "", wrapScriptParseError(err, response)
+	}
+	if len(output.Segments) == 0 {
+		return TextResponse{}, Segment{}, "", fmt.Errorf("script response returned no segments")
+	}
+
+	return response, output.Segments[0], preview, nil
+}
+
+func (e *ScriptExecutor) writeSegmentArtifacts(jobPublicID string, segment Segment) error {
+	jsonPath := scriptSegmentArtifactPath(jobPublicID, segment.Index)
+	if err := e.artifacts.WriteJSON(jsonPath, segment); err != nil {
+		return fmt.Errorf("write script segment artifact: %w", err)
+	}
+
+	return nil
+}
+
+func scriptSegmentArtifactDir(jobPublicID string) string {
+	return fmt.Sprintf("jobs/%s/script", jobPublicID)
+}
+
+func scriptSegmentArtifactPath(jobPublicID string, index int) string {
+	return fmt.Sprintf("%s/segment_%03d.json", scriptSegmentArtifactDir(jobPublicID), index)
 }
 
 func loadArtifactJSON[T any](workspaceDir string, ref any) (T, error) {

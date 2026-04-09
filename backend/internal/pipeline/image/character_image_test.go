@@ -71,6 +71,12 @@ func TestCharacterImageExecutorWritesArtifact(t *testing.T) {
 	if artifact.Images[0].FilePath != "jobs/job_character_image_123/character_images/character_000.jpg" {
 		t.Fatalf("artifact.Images[0].FilePath = %q", artifact.Images[0].FilePath)
 	}
+	assertJPEGDimensions(
+		t,
+		artifactFullPath(workspaceDir, artifact.Images[0].FilePath),
+		defaultImageWidth,
+		defaultImageHeight,
+	)
 	if len(artifact.Images[0].MatchTerms) == 0 {
 		t.Fatal("len(artifact.Images[0].MatchTerms) = 0, want non-zero")
 	}
@@ -79,6 +85,12 @@ func TestCharacterImageExecutorWritesArtifact(t *testing.T) {
 	}
 	if !artifact.Images[0].IsFallback {
 		t.Fatal("artifact.Images[0].IsFallback = false, want true")
+	}
+	if updated.OutputRef["generated_character_image_count"] != 0 {
+		t.Fatalf("generated_character_image_count = %#v, want 0", updated.OutputRef["generated_character_image_count"])
+	}
+	if updated.OutputRef["fallback_character_image_count"] != 1 {
+		t.Fatalf("fallback_character_image_count = %#v, want 1", updated.OutputRef["fallback_character_image_count"])
 	}
 }
 
@@ -94,6 +106,92 @@ func TestCharacterImageExecutorRequiresCharacterSheetDependency(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("Execute() error = nil, want error")
+	}
+}
+
+func TestCharacterImageExecutorWritesLiveImageWhenClientInjected(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	client := &fakeClient{
+		response: Response{
+			RequestID: "req_character_1",
+			Model:     "qwen-image-2.0",
+			ImageURL:  "https://example.com/character.jpg",
+			ImageData: []byte("character-image-bytes"),
+		},
+	}
+	executor := NewCharacterImageExecutorWithClient(client, GenerationConfig{
+		Model: "qwen-image-2.0",
+	}, workspaceDir)
+	writer := newArtifactWriter(workspaceDir)
+	if err := writer.WriteJSON(
+		"jobs/job_character_image_live_123/character_sheet.json",
+		characterSheetArtifact{
+			Characters: []characterProfileArtifact{
+				{
+					Name:                 "Lin Qing",
+					Appearance:           "white robe, long hair",
+					VisualSignature:      "jade pendant",
+					ReferenceSubjectType: "person",
+					ImagePromptFocus:     "front view, full body",
+				},
+			},
+		},
+	); err != nil {
+		t.Fatalf("WriteJSON(character_sheet) error = %v", err)
+	}
+
+	updated, err := executor.Execute(
+		context.Background(),
+		model.Job{PublicID: "job_character_image_live_123"},
+		model.Task{Key: "character_image", Type: model.TaskTypeCharacterImage},
+		map[string]model.Task{
+			"character_sheet": {
+				Key: "character_sheet",
+				OutputRef: map[string]any{
+					"artifact_path": "jobs/job_character_image_live_123/character_sheet.json",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("len(client.requests) = %d, want 1", len(client.requests))
+	}
+	if updated.OutputRef["generated_character_image_count"] != 1 {
+		t.Fatalf("generated_character_image_count = %#v, want 1", updated.OutputRef["generated_character_image_count"])
+	}
+	if updated.OutputRef["fallback_character_image_count"] != 0 {
+		t.Fatalf("fallback_character_image_count = %#v, want 0", updated.OutputRef["fallback_character_image_count"])
+	}
+
+	artifact := readCharacterImageArtifact(
+		t,
+		workspaceDir,
+		"jobs/job_character_image_live_123/character_images/manifest.json",
+	)
+	if artifact.Images[0].IsFallback {
+		t.Fatal("artifact.Images[0].IsFallback = true, want false")
+	}
+	if artifact.Images[0].GenerationRequestID != "req_character_1" {
+		t.Fatalf("artifact.Images[0].GenerationRequestID = %q", artifact.Images[0].GenerationRequestID)
+	}
+	if artifact.Images[0].GenerationModel != "qwen-image-2.0" {
+		t.Fatalf("artifact.Images[0].GenerationModel = %q", artifact.Images[0].GenerationModel)
+	}
+	if artifact.Images[0].SourceImageURL != "https://example.com/character.jpg" {
+		t.Fatalf("artifact.Images[0].SourceImageURL = %q", artifact.Images[0].SourceImageURL)
+	}
+
+	data, err := os.ReadFile(artifactFullPath(workspaceDir, artifact.Images[0].FilePath))
+	if err != nil {
+		t.Fatalf("ReadFile(generated character image) error = %v", err)
+	}
+	if string(data) != "character-image-bytes" {
+		t.Fatalf("generated character image bytes = %q", string(data))
 	}
 }
 

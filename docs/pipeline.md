@@ -175,7 +175,7 @@ type CharacterProfile struct {
 
 - 根据 `character_sheet` 产出独立的人物参考图 manifest
 - 将“人物参考图”与普通 `image` 段落配图拆分成两个 task 契约
-- 当前阶段只落盘结构化 artifact，不接真实出图
+- 在保持独立 task 契约的前提下，逐步补齐真实参考图生成能力
 
 **推荐资源池**：`image_gen`
 
@@ -200,15 +200,20 @@ type CharacterReferenceImage struct {
     Prompt               string
     MatchTerms           []string
     IsFallback           bool
+    GenerationRequestID  string
+    GenerationModel      string
+    SourceImageURL       string
 }
 ```
 
 **Artifact 文件**：`jobs/{job_id}/character_images/manifest.json`（相对 `WORKSPACE_DIR`）
 
 **当前代码状态**
-- 已接入独立 skeleton executor：读取真实 `character_sheet.json`，为每个角色生成参考图 manifest
+- 已接入独立 executor：读取真实 `character_sheet.json`，为每个角色生成参考图 manifest
 - 当前每个角色会额外生成 `match_terms`，供下游 `image` 做轻量命中；默认至少包含角色名本身，并会按 `/ | 、 ， , ; ；` 这类分隔符拆出简单别名
-- 当前只会落盘 JSON artifact，并预留未来参考图文件路径；对应 JPG 文件此阶段不会真实生成
+- 默认仍是 skeleton 模式：会把 JSON artifact 和本地 fallback JPG 一起落盘
+- 若显式开启 `ENABLE_LIVE_IMAGE_GENERATION=true` 且注入 DashScope 图像 client，`character_image` 也会按角色逐个请求真实参考图，并把返回图片写入 `character_{index}.jpg`
+- 当前若真实出图成功，会在 manifest 对应角色上补回最小追踪信息：`generation_request_id`、`generation_model`、`source_image_url`
 - `task.output_ref.character_sheet_ref` 会回填上游 `character_sheet` artifact 引用，便于后续 image / script 继续消费
 
 ---
@@ -242,21 +247,22 @@ type ScriptOutput struct {
 }
 
 type Segment struct {
-    Index  int    // 从 0 开始
-    Text   string // 该段原文
-    Script string // 该段的分段旁白/解说主文案
-    Summary string // 过渡兼容字段，当前仍保留给下游 image 使用
-    Shots  []Shot // 固定 10 个分镜
+    Index int    // 从 0 开始
+    Shots []Shot // 固定 10 个分镜
 }
 
 type Shot struct {
-    Index  int    // 0..9
-    Prompt string // 该分镜的画面描述 / 出图 prompt 基础语义
+    Index              int
+    VisualContent      string
+    CameraDesign       string
+    InvolvedCharacters []string
+    ImageToImagePrompt string // 有主要人物时使用，必须包含 character_sheet 里的准确人物名
+    TextToImagePrompt  string // 空镜或群演镜头时使用
 }
 ```
 
 **调用服务**：DashScope 文本生成 API（OpenAI-compatible mode，承载 Qwen 文本模型）  
-**超时**：当前代码里文本 HTTP client timeout 为 600s；默认后台 runner 还会给单次 `DispatchOnce` 套一层 12 分钟外层 deadline，因此自动跑 job 时，文本 task 当前主要受 600s HTTP timeout 约束  
+**超时**：当前代码里文本 HTTP client timeout 为 600s；`script` task 的执行 deadline 现已按 `segment_count * SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 200 秒，其他 task 仍默认使用 12 分钟执行 deadline。后台 runner / 开发态手动 dispatch 的外层超时已放宽，不再比 `script` task 更早截断。  
 **重试**：文档原先约定为最多 2 次，指数退避；当前代码尚未接入真实 retry/backoff  
 **Prompt 模板**：见 `internal/pipeline/script/prompt.go`
 
@@ -264,17 +270,23 @@ type Shot struct {
 - 文章超长（>10000字）→ 截断并在 job warning 中记录
 - API 返回非法 JSON → 重试，超过次数后 job 状态置为 failed
 
-**Artifact 文件**：`jobs/{job_id}/script.json`（相对 `WORKSPACE_DIR`）
+**Artifact 文件**
+- 汇总文件：`jobs/{job_id}/script.json`（相对 `WORKSPACE_DIR`）
+- 分段中间产物：`jobs/{job_id}/script/segment_{index:03d}.json`
 
 **当前代码状态**
 - 目标契约应与原 Gradio app 对齐：每个 segment 生成 10 个 shot；后续统一把这层结构称为 `script`
 - 已接入真实 artifact writer：无论走本地 stub 还是启用真实文本生成，成功后都会把 `ScriptOutput` 落盘到 workspace
 - `script` 现在会读取上游 `segments.json`、`outline.json` 和 `character_sheet.json` 的真实内容来构建 prompt，而不是只传 artifact 路径
 - `script` 不再负责分段，只负责沿用上游 `segmentation` 的段落边界
-- 启用真实文本生成时，`script` 当前会按 segment 逐段调用文本接口，再把所有段结果汇总写回同一个 `script.json`
-- `script` prompt 当前已对齐为“当前 segment 的分镜/script 生成”；`outline` 与 `character_sheet` 只作为剧情连续性和人物一致性的约束上下文
-- 当前 `script` artifact 已开始对齐 shot 级结构：每段会补齐固定 10 个 `shots`
-- `summary` 目前仍保留为过渡兼容字段，供下游 `image` 继续小步迁移；后续应逐步收敛到直接消费 shot prompt
+- 启用真实文本生成时，`script` 当前会按 segment 逐段调用文本接口，并在每段成功后立即写出对应的 `segment_{index}.json`，最后再汇总写回同一个 `script.json`
+- 若同一 job 的 `script/segment_{index}.json` 已存在且可解析，当前 executor 会直接复用该段结果，便于 retry / 中断后续跑
+- `script` prompt 当前已对齐为“当前 segment 的 10 个分镜生成”；`outline` 与 `character_sheet` 只作为剧情连续性和人物一致性的约束上下文
+- 当前 `script` artifact 已进一步收敛到 shot 级结构：每段只保留 `index + 10 shots`
+- 原先临时保留的 `text / script / summary` 已从 `script` artifact 移除；原文继续由 `segments.json` 提供，TTS 直接消费 segmentation 结果
+- 当前每个 shot 的核心字段已经收敛到 `involved_characters / image_to_image_prompt / text_to_image_prompt`
+- 若某个 shot 出现主要人物，当前归一化逻辑会确保 `image_to_image_prompt` 里包含人物表中的准确名称，避免下游 image 无法命中对应参考图
+- `prompt` 现在只保留在程序内部作为兼容派生值，不再写回 `script` artifact
 
 ---
 
@@ -340,7 +352,7 @@ type SubtitleItem struct {
 
 **推荐资源池**：`image_gen`
 
-**输入**：`[]Segment`（后续应以每段 `Shots[*].Prompt` 作为 shot 级图像 prompt 来源）+ `character_image` manifest + `image_style`
+**输入**：`[]Segment`（当前优先消费每段 `Shots[*].ImageToImagePrompt / TextToImagePrompt`）+ `character_image` manifest + `image_style`
 
 **输出**
 ```go
@@ -355,8 +367,7 @@ type GeneratedImage struct {
     Height       int    // 720
     IsFallback   bool   // true 表示该图片由本地降级生成
     Prompt       string // 当前 skeleton 生成的最终出图 prompt
-    Summary      string // 当前临时兼容字段；现阶段仍回填 segment 级摘要，后续应被 shot prompt 替代
-    PromptSourceType  string   // 本次 prompt 的基础语义来源：shots / summary / script / text
+    PromptSourceType  string   // 本次 prompt 的基础语义来源：shots / empty
     PromptSourceText  string   // 实际参与 prompt 组装的基础文本
     PromptSourceShots []string // 当来源是 shots 时，记录本次聚合使用的 shot 文本
     GenerationRequestID string // 真实出图成功时回填上游 request id
@@ -382,8 +393,9 @@ type ImageCharacterReference struct {
 **输出格式**：JPEG，质量 90
 
 **Prompt 构建规则**
-- 目标形态：应由 `script` 每个 segment 下的 10 个 `shot.prompt` 分别驱动出图
-- 当前临时实现：仍保持“每个 segment 产 1 张图”，但该张图的基础语义优先聚合 `segment.shots[*].prompt`；若缺失则回退到 `segment.Summary`
+- 目标形态：应由 `script` 每个 segment 下的 10 个 shot 分别驱动出图；若该镜头出现主要人物，则优先消费 `image_to_image_prompt`，否则消费 `text_to_image_prompt`
+- 当前临时实现：仍保持“每个 segment 产 1 张图”，但只会从 10 个 shots 中挑选一个更收敛的小集合来组装 prompt
+- 单图选 shot 规则：优先保留命中 `matched_characters` 的 shot；若不足，再补当前 segment 的开头 / 中段 / 结尾代表性 shot，最多取 3 条
 - 角色参考：优先使用 `matched_characters`，否则回退到 `character_references` candidates，并把所选角色的参考 prompt 一并拼入
 - 风格参数：来自 `image_style`
 - 固定后缀：`，电影级构图，高质量，16:9`
@@ -393,9 +405,9 @@ type ImageCharacterReference struct {
 
 **当前代码状态**
 - 已接入最小 skeleton executor：会读取真实 `script.json` 与 `character_images/manifest.json`，并把结果落盘到 `jobs/{job_id}/images/image_manifest.json`
-- 当前 manifest 已包含每段的 skeleton prompt、摘要、prompt source trace、`character_references` 与 `matched_characters`
-- 当前单张配图仍保持“每个 segment 产 1 张图”，但 prompt 基础语义已优先取 `shots` 聚合结果；若上游还没有 `shots`，则回退到 `summary`
-- `matched_characters` 当前使用轻量规则：遍历 `match_terms`，在 segment `shots / summary / script / text` 中做字符串命中
+- 当前 manifest 已包含每段的 skeleton prompt、prompt source trace、`character_references` 与 `matched_characters`
+- 当前单张配图仍保持“每个 segment 产 1 张图”，但 prompt 基础语义已固定取收紧后的 `shots` 子集，并优先使用 `image_to_image_prompt / text_to_image_prompt`
+- `matched_characters` 当前使用轻量规则：遍历 `match_terms`，在 segment `shots` 的 prompt 与 `involved_characters` 中做字符串命中
 - 当前 prompt 组装顺序与原 Gradio 思路对齐：优先使用 `matched_characters`，若为空则回退 `character_references` 作为 candidates；所选角色的人物参考描述会直接拼进 prompt
 - 当前已支持注入真实 DashScope 图像 client；启用后会按段请求并把返回图片落到 `segment_{index}.jpg`
 - 当前若真实出图成功，会在 manifest 对应段上补回最小追踪信息：`generation_request_id`、`generation_model`、`source_image_url`
@@ -473,6 +485,10 @@ type Executor interface {
         character_001.jpg
         ...
       script.json
+      script/
+        segment_000.json
+        segment_001.json
+        ...
       audio/
         segment_000.wav
         segment_001.wav

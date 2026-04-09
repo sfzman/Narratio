@@ -19,17 +19,20 @@ func newArtifactWriter(workspaceDir string) artifactWriter {
 }
 
 func (w artifactWriter) WriteJSON(relativePath string, value any) error {
-	fullPath := artifactFullPath(w.workspaceDir, relativePath)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		return fmt.Errorf("create artifact dir: %w", err)
-	}
-
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal artifact json: %w", err)
 	}
 	data = append(data, '\n')
 
+	return w.WriteBytes(relativePath, data)
+}
+
+func (w artifactWriter) WriteBytes(relativePath string, data []byte) error {
+	fullPath := artifactFullPath(w.workspaceDir, relativePath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return fmt.Errorf("create artifact dir: %w", err)
+	}
 	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
 		return fmt.Errorf("write artifact file: %w", err)
 	}

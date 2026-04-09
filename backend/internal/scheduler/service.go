@@ -23,12 +23,13 @@ func (realClock) Now() time.Time {
 const persistenceTimeout = 5 * time.Second
 
 type Service struct {
-	jobStore  store.JobStore
-	taskStore store.TaskStore
-	registry  *ExecutorRegistry
-	resources ResourceManager
-	clock     Clock
-	log       *slog.Logger
+	jobStore                store.JobStore
+	taskStore               store.TaskStore
+	registry                *ExecutorRegistry
+	resources               ResourceManager
+	clock                   Clock
+	scriptTimeoutPerSegment time.Duration
+	log                     *slog.Logger
 }
 
 func NewService(
@@ -38,13 +39,21 @@ func NewService(
 	resources ResourceManager,
 ) *Service {
 	return &Service{
-		jobStore:  jobStore,
-		taskStore: taskStore,
-		registry:  registry,
-		resources: resources,
-		clock:     realClock{},
-		log:       slog.Default(),
+		jobStore:                jobStore,
+		taskStore:               taskStore,
+		registry:                registry,
+		resources:               resources,
+		clock:                   realClock{},
+		scriptTimeoutPerSegment: defaultScriptSegmentExecutionTimeout,
+		log:                     slog.Default(),
 	}
+}
+
+func (s *Service) SetScriptTimeoutPerSegment(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	s.scriptTimeoutPerSegment = timeout
 }
 
 func (s *Service) DispatchOnce(
@@ -64,7 +73,14 @@ func (s *Service) DispatchOnce(
 		return DispatchResult{}, model.Job{}, err
 	}
 
-	result, err := DispatchNextReadyTask(ctx, job, tasks, s.registry, s.resources)
+	result, err := DispatchNextReadyTaskWithTimeouts(
+		ctx,
+		job,
+		tasks,
+		s.registry,
+		s.resources,
+		s.scriptTimeoutPerSegment,
+	)
 	if err != nil {
 		s.log.Error("dispatch next ready task failed",
 			"job_id", jobID,

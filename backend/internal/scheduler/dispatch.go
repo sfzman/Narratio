@@ -3,8 +3,14 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
+)
+
+const (
+	defaultTaskExecutionTimeout          = 12 * time.Minute
+	defaultScriptSegmentExecutionTimeout = 200 * time.Second
 )
 
 type Executor interface {
@@ -48,6 +54,24 @@ func DispatchNextReadyTask(
 	registry *ExecutorRegistry,
 	resources ResourceManager,
 ) (DispatchResult, error) {
+	return DispatchNextReadyTaskWithTimeouts(
+		ctx,
+		job,
+		tasks,
+		registry,
+		resources,
+		defaultScriptSegmentExecutionTimeout,
+	)
+}
+
+func DispatchNextReadyTaskWithTimeouts(
+	ctx context.Context,
+	job model.Job,
+	tasks []model.Task,
+	registry *ExecutorRegistry,
+	resources ResourceManager,
+	scriptTimeoutPerSegment time.Duration,
+) (DispatchResult, error) {
 	updated := PromoteReadyTasks(tasks)
 
 	for i, task := range updated {
@@ -67,7 +91,14 @@ func DispatchNextReadyTask(
 		updated[i].Status = model.TaskStatusRunning
 		updated[i].Attempt++
 		dependencies := dependencyTasks(updated[i], updated)
-		executedTask, err := executor.Execute(ctx, job, updated[i], dependencies)
+		executionCtx, cancel := withTaskExecutionTimeout(
+			ctx,
+			updated[i],
+			dependencies,
+			scriptTimeoutPerSegment,
+		)
+		executedTask, err := executor.Execute(executionCtx, job, updated[i], dependencies)
+		cancel()
 		resources.Release(task.ResourceKey)
 		executedTask = mergeExecutedTask(updated[i], executedTask)
 		if err != nil {
@@ -91,6 +122,68 @@ func DispatchNextReadyTask(
 	}
 
 	return DispatchResult{Tasks: updated}, nil
+}
+
+func withTaskExecutionTimeout(
+	parent context.Context,
+	task model.Task,
+	dependencies map[string]model.Task,
+	scriptTimeoutPerSegment time.Duration,
+) (context.Context, context.CancelFunc) {
+	timeout := taskExecutionTimeout(task, dependencies, scriptTimeoutPerSegment)
+	if timeout <= 0 {
+		return context.WithCancel(parent)
+	}
+
+	return context.WithTimeout(parent, timeout)
+}
+
+func taskExecutionTimeout(
+	task model.Task,
+	dependencies map[string]model.Task,
+	scriptTimeoutPerSegment time.Duration,
+) time.Duration {
+	if task.Type != model.TaskTypeScript {
+		return defaultTaskExecutionTimeout
+	}
+
+	if scriptTimeoutPerSegment <= 0 {
+		scriptTimeoutPerSegment = defaultScriptSegmentExecutionTimeout
+	}
+	segmentCount := scriptSegmentCount(dependencies["segmentation"])
+	if segmentCount <= 0 {
+		return defaultTaskExecutionTimeout
+	}
+
+	return time.Duration(segmentCount) * scriptTimeoutPerSegment
+}
+
+func scriptSegmentCount(task model.Task) int {
+	if task.OutputRef == nil {
+		return 0
+	}
+
+	return taskOutputInt(task.OutputRef, "segment_count")
+}
+
+func taskOutputInt(values map[string]any, key string) int {
+	value, ok := values[key]
+	if !ok {
+		return 0
+	}
+
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	default:
+		return 0
+	}
 }
 
 func mergeExecutedTask(before model.Task, after model.Task) model.Task {

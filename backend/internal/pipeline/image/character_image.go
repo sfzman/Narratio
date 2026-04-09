@@ -12,8 +12,10 @@ import (
 )
 
 type CharacterImageExecutor struct {
-	log       *slog.Logger
-	artifacts artifactWriter
+	log              *slog.Logger
+	client           Client
+	generationConfig GenerationConfig
+	artifacts        artifactWriter
 }
 
 type CharacterImageOutput struct {
@@ -28,6 +30,9 @@ type CharacterReferenceImage struct {
 	Prompt               string   `json:"prompt"`
 	MatchTerms           []string `json:"match_terms"`
 	IsFallback           bool     `json:"is_fallback"`
+	GenerationRequestID  string   `json:"generation_request_id,omitempty"`
+	GenerationModel      string   `json:"generation_model,omitempty"`
+	SourceImageURL       string   `json:"source_image_url,omitempty"`
 }
 
 type characterSheetArtifact struct {
@@ -43,14 +48,24 @@ type characterProfileArtifact struct {
 }
 
 func NewCharacterImageExecutor(workspaceDir string) *CharacterImageExecutor {
+	return NewCharacterImageExecutorWithClient(nil, GenerationConfig{}, workspaceDir)
+}
+
+func NewCharacterImageExecutorWithClient(
+	client Client,
+	generationConfig GenerationConfig,
+	workspaceDir string,
+) *CharacterImageExecutor {
 	return &CharacterImageExecutor{
-		log:       slog.Default().With("executor", "character_image"),
-		artifacts: newArtifactWriter(workspaceDir),
+		log:              slog.Default().With("executor", "character_image"),
+		client:           client,
+		generationConfig: normalizeGenerationConfig(generationConfig),
+		artifacts:        newArtifactWriter(workspaceDir),
 	}
 }
 
 func (e *CharacterImageExecutor) Execute(
-	_ context.Context,
+	ctx context.Context,
 	job model.Job,
 	task model.Task,
 	dependencies map[string]model.Task,
@@ -69,16 +84,21 @@ func (e *CharacterImageExecutor) Execute(
 	}
 
 	artifactPath := fmt.Sprintf("jobs/%s/character_images/manifest.json", job.PublicID)
-	output := buildCharacterImageOutput(job.PublicID, characterSheet)
+	output, err := e.generateOutput(ctx, job.PublicID, characterSheet)
+	if err != nil {
+		return task, err
+	}
 	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
 		return task, fmt.Errorf("write character image artifact: %w", err)
 	}
 
 	task.OutputRef = map[string]any{
-		"artifact_type":         "character_image",
-		"artifact_path":         artifactPath,
-		"character_sheet_ref":   characterSheetTask.OutputRef["artifact_path"],
-		"character_image_count": len(output.Images),
+		"artifact_type":                   "character_image",
+		"artifact_path":                   artifactPath,
+		"character_sheet_ref":             characterSheetTask.OutputRef["artifact_path"],
+		"character_image_count":           len(output.Images),
+		"generated_character_image_count": countGeneratedCharacterImages(output.Images),
+		"fallback_character_image_count":  countFallbackCharacterImages(output.Images),
 	}
 
 	e.log.Info("character image execution completed",
@@ -91,6 +111,22 @@ func (e *CharacterImageExecutor) Execute(
 	)
 
 	return task, nil
+}
+
+func (e *CharacterImageExecutor) generateOutput(
+	ctx context.Context,
+	jobPublicID string,
+	characterSheet characterSheetArtifact,
+) (CharacterImageOutput, error) {
+	output := buildCharacterImageOutput(jobPublicID, characterSheet)
+	if err := e.generateLiveCharacterImages(ctx, output.Images); err != nil {
+		return CharacterImageOutput{}, err
+	}
+	if err := writeFallbackCharacterImages(e.artifacts, output.Images); err != nil {
+		return CharacterImageOutput{}, err
+	}
+
+	return output, nil
 }
 
 func buildCharacterImageOutput(
@@ -131,6 +167,7 @@ func buildCharacterImagePrompt(character characterProfileArtifact) string {
 		strings.TrimSpace(character.Appearance),
 		strings.TrimSpace(character.VisualSignature),
 		strings.TrimSpace(character.ImagePromptFocus),
+		"人物设定参考图，单人，构图稳定，无文字，无水印",
 	}
 
 	filtered := make([]string, 0, len(parts))
@@ -142,6 +179,41 @@ func buildCharacterImagePrompt(character characterProfileArtifact) string {
 	}
 
 	return strings.Join(filtered, "; ")
+}
+
+func (e *CharacterImageExecutor) generateLiveCharacterImages(
+	ctx context.Context,
+	images []CharacterReferenceImage,
+) error {
+	if e.client == nil {
+		return nil
+	}
+
+	for index := range images {
+		generated, err := e.client.Generate(ctx, Request{
+			Model:          e.generationConfig.Model,
+			Prompt:         images[index].Prompt,
+			Size:           e.generationConfig.Size,
+			NegativePrompt: e.generationConfig.NegativePrompt,
+		})
+		if err != nil {
+			e.log.Warn("character image generation failed, writing fallback image",
+				"character_index", images[index].CharacterIndex,
+				"character_name", images[index].CharacterName,
+				"error", err,
+			)
+			continue
+		}
+		if err := e.artifacts.WriteBytes(images[index].FilePath, generated.ImageData); err != nil {
+			return fmt.Errorf("write generated character image file: %w", err)
+		}
+		images[index].IsFallback = false
+		images[index].GenerationRequestID = strings.TrimSpace(generated.RequestID)
+		images[index].GenerationModel = strings.TrimSpace(generated.Model)
+		images[index].SourceImageURL = strings.TrimSpace(generated.ImageURL)
+	}
+
+	return nil
 }
 
 func buildCharacterMatchTerms(name string) []string {
@@ -191,6 +263,30 @@ func fallbackString(value string, fallback string) string {
 	}
 
 	return fallback
+}
+
+func countGeneratedCharacterImages(images []CharacterReferenceImage) int {
+	count := 0
+	for _, image := range images {
+		if image.IsFallback {
+			continue
+		}
+		count++
+	}
+
+	return count
+}
+
+func countFallbackCharacterImages(images []CharacterReferenceImage) int {
+	count := 0
+	for _, image := range images {
+		if !image.IsFallback {
+			continue
+		}
+		count++
+	}
+
+	return count
 }
 
 func loadArtifactJSON[T any](workspaceDir string, ref any) (T, error) {

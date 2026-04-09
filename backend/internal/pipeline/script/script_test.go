@@ -2,6 +2,7 @@ package script
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -79,6 +80,9 @@ func TestScriptExecutorExecute(t *testing.T) {
 	if got.OutputRef["artifact_type"] != "script" {
 		t.Fatalf("artifact_type = %#v, want %#v", got.OutputRef["artifact_type"], "script")
 	}
+	if got.OutputRef["segment_artifact_dir"] != "jobs/job_test_script/script" {
+		t.Fatalf("segment_artifact_dir = %#v", got.OutputRef["segment_artifact_dir"])
+	}
 	if got.OutputRef["segmentation_ref"] != "jobs/job_test_script/segments.json" {
 		t.Fatalf("segmentation_ref = %#v", got.OutputRef["segmentation_ref"])
 	}
@@ -100,17 +104,36 @@ func TestScriptExecutorExecute(t *testing.T) {
 	if len(artifact.Segments) != 1 {
 		t.Fatalf("len(segments) = %d, want 1", len(artifact.Segments))
 	}
-	if artifact.Segments[0].Script == "" {
-		t.Fatal("segments[0].script = empty, want non-empty")
-	}
-	if artifact.Segments[0].Text != "A short article for script generation." {
-		t.Fatalf("segments[0].text = %q", artifact.Segments[0].Text)
+	if artifact.Segments[0].Index != 0 {
+		t.Fatalf("segments[0].index = %d", artifact.Segments[0].Index)
 	}
 	if len(artifact.Segments[0].Shots) != defaultShotsPerSegment {
 		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), defaultShotsPerSegment)
 	}
-	if artifact.Segments[0].Shots[0].Prompt == "" {
-		t.Fatal("segments[0].shots[0].prompt = empty, want non-empty")
+	if effectiveShotPrompt(artifact.Segments[0].Shots[0]) == "" {
+		t.Fatal("segments[0].shots[0] effective prompt = empty, want non-empty")
+	}
+
+	segmentArtifact := readJSONArtifact[Segment](
+		t,
+		workspaceDir,
+		"jobs/job_test_script/script/segment_000.json",
+	)
+	if segmentArtifact.Index != 0 {
+		t.Fatalf("segment artifact index = %d", segmentArtifact.Index)
+	}
+	if segmentArtifact.Shots[0].ImageToImagePrompt != "" &&
+		segmentArtifact.Shots[0].TextToImagePrompt != "" {
+		t.Fatal("segment artifact shot has both image_to_image_prompt and text_to_image_prompt")
+	}
+	segmentJSONBytes, err := os.ReadFile(
+		artifactFullPath(workspaceDir, "jobs/job_test_script/script/segment_000.json"),
+	)
+	if err != nil {
+		t.Fatalf("ReadFile(segment json) error = %v", err)
+	}
+	if strings.Contains(string(segmentJSONBytes), `"prompt":`) {
+		t.Fatalf("segment json contains legacy prompt field: %s", string(segmentJSONBytes))
 	}
 }
 
@@ -136,7 +159,44 @@ func TestBuildScriptOutputExtractsWrappedJSONObject(t *testing.T) {
 	if len(output.Segments) != 1 {
 		t.Fatalf("len(segments) = %d, want 1", len(output.Segments))
 	}
-	if output.Segments[0].Shots[0].Prompt != "主角在雨夜现身。" {
-		t.Fatalf("segments[0].shots[0].prompt = %q", output.Segments[0].Shots[0].Prompt)
+	if effectiveShotPrompt(output.Segments[0].Shots[0]) != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0] effective prompt = %q", effectiveShotPrompt(output.Segments[0].Shots[0]))
+	}
+}
+
+func TestBuildScriptOutputNormalizesCharacterPrompts(t *testing.T) {
+	t.Parallel()
+
+	segmentation := SegmentationOutput{
+		Segments: []TextSegment{
+			{Index: 0, Text: "第一段原文", CharCount: 5},
+		},
+	}
+	responseText := `{"segments":[{"index":0,"shots":[{"index":0,"visual_content":"林中对峙","camera_design":"中景，平视，轻微推近","involved_characters":["阿莲"],"image_to_image_prompt":"在雨夜林地中对峙，冷色侧光"},{"index":1,"visual_content":"旧院空镜","camera_design":"远景，固定镜头","involved_characters":[],"text_to_image_prompt":"暴雨后的旧院青石地面反光，破旧木门半开，冷雾贴地"}]}]}`
+
+	output, err := buildScriptOutput(segmentation, responseText)
+	if err != nil {
+		t.Fatalf("buildScriptOutput() error = %v", err)
+	}
+	if output.Segments[0].Shots[0].ImageToImagePrompt == "" {
+		t.Fatal("segments[0].shots[0].image_to_image_prompt = empty")
+	}
+	if !strings.Contains(output.Segments[0].Shots[0].ImageToImagePrompt, "阿莲") {
+		t.Fatalf("segments[0].shots[0].image_to_image_prompt = %q, want character name injected", output.Segments[0].Shots[0].ImageToImagePrompt)
+	}
+	if output.Segments[0].Shots[0].Prompt != output.Segments[0].Shots[0].ImageToImagePrompt {
+		t.Fatalf("segments[0].shots[0].prompt = %q, want derived image prompt", output.Segments[0].Shots[0].Prompt)
+	}
+	if output.Segments[0].Shots[1].TextToImagePrompt == "" {
+		t.Fatal("segments[0].shots[1].text_to_image_prompt = empty")
+	}
+	if output.Segments[0].Shots[1].Prompt != output.Segments[0].Shots[1].TextToImagePrompt {
+		t.Fatalf("segments[0].shots[1].prompt = %q, want derived text prompt", output.Segments[0].Shots[1].Prompt)
+	}
+	if output.Segments[0].Shots[0].TextToImagePrompt != "" {
+		t.Fatalf("segments[0].shots[0].text_to_image_prompt = %q, want empty", output.Segments[0].Shots[0].TextToImagePrompt)
+	}
+	if output.Segments[0].Shots[1].ImageToImagePrompt != "" {
+		t.Fatalf("segments[0].shots[1].image_to_image_prompt = %q, want empty", output.Segments[0].Shots[1].ImageToImagePrompt)
 	}
 }

@@ -15,12 +15,11 @@ func buildCharacterSheetPrompts(article string) (string, string) {
 }
 
 func buildScriptPrompts(
-	voiceID string,
 	segmentation SegmentationOutput,
 	outline OutlineOutput,
 	characters CharacterSheetOutput,
 ) (string, string) {
-	return buildChineseScriptPrompts(voiceID, segmentation, outline, characters)
+	return buildChineseScriptPrompts(segmentation, outline, characters)
 }
 
 func buildChineseOutlinePrompts(article string) (string, string) {
@@ -119,54 +118,64 @@ func buildChineseCharacterSheetPrompts(article string) (string, string) {
 }
 
 func buildChineseScriptPrompts(
-	voiceID string,
 	segmentation SegmentationOutput,
 	outline OutlineOutput,
 	characters CharacterSheetOutput,
 ) (string, string) {
-	systemPrompt := `你是一名中文分镜脚本生成助手，服务目标是为当前 segment 生成可直接下游消费的 script。
+	systemPrompt := `你是一名中文影视分镜设计助手，负责把当前小说分段拆成适合“图像分镜生成”的 10 个镜头。
 
-你的唯一任务，是基于“当前分段原文”生成这一段的分镜化 script，并补足固定 10 个 shots。
+你会同时收到三类上下文：
+1. 完整故事大纲
+2. 主要人物总表
+3. 当前要处理的单个分段原文
 
-outline 和 character_sheet 只是连续性约束，用来帮助你保持剧情主线、人物身份、关系、状态、场景和关键物品不跑偏；不要把它们重写成总结，不要扩写成新的剧情。
-
-输出目标：
-1. 只处理当前输入的这个 segment，不负责重新分段，不要补写前后段内容。
-2. script 是这一段的解说/旁白主文案，服务后续 TTS 与视频串联；可以更顺口，但不能改变事实。
-3. shots 是这一段的 10 个具体分镜画面描述，服务后续配图；必须和当前 segment 的情节推进一致。
-4. summary 只是过渡兼容字段，保留一句话即可。
+你的任务目标：
+1. 只围绕“当前分段原文”生成镜头，不要把后文剧情提前写进来。
+2. 必须参考完整故事大纲和主要人物表，确保人物状态、关系、服装、伤势、情绪、秘密、地点连续性不丢失。
+3. 输出要给后续生图模型直接消费，因此每个镜头最重要的是“图生图提示词(image_to_image_prompt)”或“文生图提示词(text_to_image_prompt)”。
+4. 不要寒暄，不要解释思路，不要输出代码块。
 5. 只输出 JSON，不要输出额外说明。
+
+请严格遵守：
+1. 必须输出且只输出 10 个分镜，不能少也不能多。
+2. 不得新增原文没有的重要人物、关键事件、关键道具。
+3. 可以做低风险视觉补足，但必须与原文和人物表一致。
+4. 每个镜头都要有明确视觉主体、动作、场景、氛围。
+5. 镜头设计必须尽量包含景别、视角、运镜，且描述克制、可执行。
+6. 每个镜头都必须额外输出 involved_characters：
+   - 如果出现主要人物，必须优先填写人物表里的准确名称。
+   - 多个角色时，只保留最关键的 1 到 3 个主要人物名称。
+   - 如果没有主要人物、只有空镜或群演环境镜头，involved_characters 返回空数组 []。
+7. 如果 involved_characters 非空，则该镜头必须输出 image_to_image_prompt：
+   - 必须直接包含人物表里的准确名称，不能改成泛称、关系称呼或临时别名。
+   - 重点写：人物名、动作关系、当前镜头新增或必须强调的道具/状态、场景、构图、光线。
+   - 不要重复大段固定外观锚点，外观一致性交给人物参考图。
+8. 如果 involved_characters 为空，则该镜头必须输出 text_to_image_prompt：
+   - 必须写成可独立生图的完整中文描述。
+   - 不要写抽象创作指令或主观评价，要把气氛翻译成可见信息。
+9. visual_content 和 camera_design 要简洁，但要服务后续图生视频可用性。
+10. 对于image_to_image_prompt字段, 如果该镜头出现主要人物则填写，否则留空; text_to_image_prompt字段则相反，如果该镜头是空镜或群演镜头则填写，否则留空。两者不允许同时填写，也不允许同时留空。
 
 请严格使用以下 JSON 结构：
 {
- "segments": [
+  "segments": [
     {
       "index": 0,
-      "text": "...",
-      "script": "...",
-      "summary": "...",
       "shots": [
         {
           "index": 0,
-          "prompt": "..."
+          "visual_content": "...",
+          "camera_design": "...",
+          "involved_characters": ["人物A", "人物B"],
+          "image_to_image_prompt": "...",
+          "text_to_image_prompt": "..." 
         }
       ]
     }
   ]
-}
-
-额外要求：
-1. 当前调用只返回 1 个 segment；index 必须与输入 segment 保持一致。
-2. 不要改写 segment 的 text；该字段只用于回填当前原文分段。
-3. script 必须适合 TTS 朗读，语句自然、信息清晰，可适度增加停顿符号，但不要堆砌修辞。
-4. summary 控制在一句话内，聚焦这一段最适合画面的动作、情绪或场景信息。
-5. shots 必须固定输出 10 个，index 为 0 到 9；每个 prompt 直接描述一个可出图的具体分镜画面。
-6. 10 个 shots 要覆盖这一段内部的动作推进、场景变化和情绪节奏，不能只重复同一句摘要。
-7. 必须参考 outline 和 character_sheet，保证人物身份、关系、状态、场景连续性和信息差不跑偏。
-8. voice_id 仅作为语气参考，不改变剧情内容，不新增原文没有发生的事件。`
+}`
 	userPrompt := fmt.Sprintf(
-		"下面请基于提供的上下文，只为当前这一个 segment 生成分镜 script。\n\n【VoiceID】%s\n\n【当前分段开始】\n%s\n【当前分段结束】\n\n【剧情大纲上下文开始】\n%s\n【剧情大纲上下文结束】\n\n【人物设定上下文开始】\n%s\n【人物设定上下文结束】",
-		voiceID,
+		"下面请基于提供的上下文，只为当前这一个 segment 生成分镜 script。\n\n【当前分段开始】\n%s\n【当前分段结束】\n\n【剧情大纲上下文开始】\n%s\n【剧情大纲上下文结束】\n\n【人物设定上下文开始】\n%s\n【人物设定上下文结束】",
 		mustJSONString(segmentation),
 		mustJSONString(outline),
 		mustJSONString(characters),

@@ -79,6 +79,7 @@ TTS_API_BASE_URL=https://your-tts-service.com
 TTS_API_KEY=your-tts-key-here
 
 WORKSPACE_DIR=./workspace
+SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS=200
 ```
 
 当前代码状态：
@@ -88,14 +89,14 @@ WORKSPACE_DIR=./workspace
 - SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
 - 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
 - `segmentation / outline / character_sheet / script / tts / character_image / image` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
-- `image` 已支持注入真实 DashScope client；只有显式打开 `ENABLE_LIVE_IMAGE_GENERATION=true` 且配置了 `DASHSCOPE_IMAGE_API_KEY` 时，才会尝试真实图片请求
+- `image` / `character_image` 已支持注入真实 DashScope client；只有显式打开 `ENABLE_LIVE_IMAGE_GENERATION=true` 且配置了 `DASHSCOPE_IMAGE_API_KEY` 时，才会尝试真实图片请求
 
 注意：
 
 - 当前默认是 skeleton 模式，`ENABLE_LIVE_TEXT_GENERATION=false`
 - 图片默认也仍是 skeleton 模式，`ENABLE_LIVE_IMAGE_GENERATION=false`
 - 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口；`segmentation` 始终走本地 deterministic 路径
-- 即使配置了 `DASHSCOPE_IMAGE_API_KEY`，只要不显式打开该开关，`image` 也不会调用真实 DashScope 图像接口
+- 即使配置了 `DASHSCOPE_IMAGE_API_KEY`，只要不显式打开该开关，`image` / `character_image` 也不会调用真实 DashScope 图像接口
 
 ### 最小真实联调：只打开 live image
 

@@ -102,8 +102,12 @@ func LoadRuntime() (*Runtime, error) {
 			textGenerationConfig,
 			cfg.WorkspaceDir,
 		),
-		model.TaskTypeCharacterImage: imagepipeline.NewCharacterImageExecutor(cfg.WorkspaceDir),
-		model.TaskTypeTTS:            ttspipeline.NewExecutor(cfg.WorkspaceDir),
+		model.TaskTypeCharacterImage: imagepipeline.NewCharacterImageExecutorWithClient(
+			imageClient,
+			imageGenerationConfig,
+			cfg.WorkspaceDir,
+		),
+		model.TaskTypeTTS: ttspipeline.NewExecutor(cfg.WorkspaceDir),
 		model.TaskTypeImage: imagepipeline.NewExecutorWithClient(
 			imageClient,
 			imageGenerationConfig,
@@ -113,6 +117,9 @@ func LoadRuntime() (*Runtime, error) {
 	})
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)
+	schedulerService.SetScriptTimeoutPerSegment(
+		time.Duration(cfg.ScriptTimeoutPerSegmentSeconds) * time.Second,
+	)
 	runCoordinator := jobapp.NewRunCoordinator()
 	backgroundRunner := jobapp.NewBackgroundRunner(schedulerService, runCoordinator)
 	jobsService := jobapp.NewService(store, backgroundRunner)
@@ -130,6 +137,7 @@ func LoadRuntime() (*Runtime, error) {
 	slog.Info("runtime initialized",
 		"database_driver", cfg.DatabaseDriver,
 		"database_dsn", cfg.DatabaseDSN,
+		"script_timeout_per_segment_seconds", cfg.ScriptTimeoutPerSegmentSeconds,
 		"live_text_generation", cfg.EnableLiveTextGeneration,
 		"live_image_generation", cfg.EnableLiveImageGeneration,
 		"dashscope_text_base_url", cfg.DashScopeTextBaseURL,

@@ -28,6 +28,26 @@ func writeFallbackImages(artifacts artifactWriter, images []GeneratedImage) erro
 	return nil
 }
 
+func writeFallbackCharacterImages(
+	artifacts artifactWriter,
+	images []CharacterReferenceImage,
+) error {
+	for _, item := range images {
+		if !item.IsFallback {
+			continue
+		}
+		data, err := buildFallbackJPEG(defaultImageWidth, defaultImageHeight)
+		if err != nil {
+			return fmt.Errorf("build fallback jpeg: %w", err)
+		}
+		if err := artifacts.WriteBytes(item.FilePath, data); err != nil {
+			return fmt.Errorf("write fallback character image: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func buildFallbackJPEG(width int, height int) ([]byte, error) {
 	canvas := image.NewRGBA(image.Rect(0, 0, normalizedDimension(width, defaultImageWidth), normalizedDimension(height, defaultImageHeight)))
 	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: fallbackBackgroundColor}, image.Point{}, draw.Src)

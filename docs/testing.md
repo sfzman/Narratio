@@ -113,12 +113,18 @@ func TestScriptRun(t *testing.T) {
 
 ### executor
 - [ ] script executor 正确消费 segmentation / outline / character_sheet 输出，按 segment 调用文本生成，并产出每段 10 个 shot 的 script 结构
+- [x] script executor 会逐段落盘 `script/segment_{index}.json`，便于运行中观察和中断后续跑
+- [x] script executor 在同一 job 重试时，会优先复用已存在且可解析的 segment artifact
+- [x] script executor 会为每个 shot 产出 `involved_characters / image_to_image_prompt / text_to_image_prompt`，并在出现主要人物时确保 prompt 带上准确人物名
 - [ ] tts executor 正确消费 segmentation 输出并落盘 tts manifest / subtitles.srt / 占位 WAV
-- [ ] character_image executor 正确消费 character_sheet 输出并落盘 artifact
+- [x] character_image executor 正确消费 character_sheet 输出并落盘 artifact / fallback JPG
+- [x] character_image executor 在注入真实 image client 时，会写出真实参考图并回填最小追踪字段
 - [ ] image executor 正确消费 script / character_image artifact，并按“优先 matched、否则 candidates”把角色参考 prompt 拼进 manifest
-- [x] image executor 优先从 script 的 shot 级 prompt 消费出图输入；当前仍保留 summary fallback 兼容路径
+- [x] image executor 优先从 script 的 shot 级 prompt 消费出图输入，不再依赖 summary/script/text 兼容字段
+- [x] image executor 当前优先消费 `image_to_image_prompt / text_to_image_prompt`，并把它们作为单图选 shot 的基础语义
 - [x] image executor 在 manifest 中记录 prompt source trace，便于联调时确认每段图片实际消费了哪些 shot 文本
-- [ ] image executor 在生成失败时回退到 fallback 图片，并真实写出本地占位图文件
+- [x] image executor 在生成失败时回退到 fallback 图片，并真实写出本地占位图文件
+- [x] image executor 单图模式会从 10 个 shots 中收紧挑选少量代表性 shot，避免把整段 10 个镜头全部拼进单张图片 prompt
 - [ ] video executor 校验 `tts.segment_count` 与 `audio_segment_paths` / image 数量对齐；在 workspace 模式下再校验 tts/image artifact、WAV / SRT / JPG 依赖文件存在性，并在输入缺失时返回明确错误
 
 ## FFmpeg 测试策略

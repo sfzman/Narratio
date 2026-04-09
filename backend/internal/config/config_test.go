@@ -11,6 +11,7 @@ var narratioEnvKeys = []string{
 	"DATABASE_DRIVER",
 	"DATABASE_DSN",
 	"WORKSPACE_DIR",
+	"SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS",
 	"ENABLE_LIVE_TEXT_GENERATION",
 	"ENABLE_LIVE_IMAGE_GENERATION",
 	"DASHSCOPE_TEXT_API_KEY",
@@ -38,6 +39,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 
 	if cfg.Port != "8080" {
 		t.Fatalf("Port = %q", cfg.Port)
+	}
+	if cfg.ScriptTimeoutPerSegmentSeconds != 200 {
+		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d", cfg.ScriptTimeoutPerSegmentSeconds)
 	}
 	if cfg.EnableLiveTextGeneration {
 		t.Fatal("EnableLiveTextGeneration = true, want false by default")
@@ -69,6 +73,38 @@ func TestLoadReadsLiveTextGenerationFlag(t *testing.T) {
 
 	if !cfg.EnableLiveTextGeneration {
 		t.Fatal("EnableLiveTextGeneration = false, want true")
+	}
+}
+
+func TestLoadReadsScriptTimeoutPerSegmentSeconds(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS", "320")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.ScriptTimeoutPerSegmentSeconds != 320 {
+		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d, want 320", cfg.ScriptTimeoutPerSegmentSeconds)
+	}
+}
+
+func TestLoadFallsBackWhenScriptTimeoutPerSegmentSecondsInvalid(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS", "abc")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.ScriptTimeoutPerSegmentSeconds != 200 {
+		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d, want 200", cfg.ScriptTimeoutPerSegmentSeconds)
 	}
 }
 

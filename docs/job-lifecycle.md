@@ -200,7 +200,7 @@ const (
 - 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
 - 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
 - 当前 skeleton 已可让 script task 读取 segmentation / outline / character_sheet 的依赖产物
-- 当前 skeleton 已新增 `character_image` 独立 task，成功后会把人物参考图 manifest 落盘到 workspace
+- 当前 `character_image` 独立 task 已接入：成功后会把人物参考图 manifest 落盘到 workspace，并在非 live 模式下写出 fallback JPG
 - 当前最小后台 runner 已接入，默认会在 job 创建后自动持续推进
 - `POST /jobs/:id/dispatch-once` 仍保留为开发态接口；若同一 job 已在后台运行，该接口返回 no-op
 

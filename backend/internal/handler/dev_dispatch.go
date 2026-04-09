@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const dispatchOnceTimeout = 2 * time.Minute
+const dispatchOnceTimeout = 2 * time.Hour
 
 func (h Handlers) dispatchOnce(c *gin.Context) {
 	if h.dispatcher == nil {

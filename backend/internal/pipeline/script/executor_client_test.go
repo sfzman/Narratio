@@ -3,6 +3,7 @@ package script
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -15,11 +16,19 @@ type fakeTextClient struct {
 	response  TextResponse
 	responses []TextResponse
 	err       error
+	errs      []error
 }
 
 func (f *fakeTextClient) Generate(_ context.Context, request TextRequest) (TextResponse, error) {
 	f.request = request
 	f.requests = append(f.requests, request)
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		if err != nil {
+			return TextResponse{}, err
+		}
+	}
 	if f.err != nil {
 		return TextResponse{}, f.err
 	}
@@ -223,7 +232,7 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	if client.requests[0].MaxTokens != defaultScriptMaxTokens {
 		t.Fatalf("max_tokens = %d, want %d", client.requests[0].MaxTokens, defaultScriptMaxTokens)
 	}
-	if !strings.Contains(client.requests[0].Messages[0].Content, "中文分镜脚本生成助手") {
+	if !strings.Contains(client.requests[0].Messages[0].Content, "中文影视分镜设计助手") {
 		t.Fatalf("system prompt = %q", client.requests[0].Messages[0].Content)
 	}
 	userPrompt := client.requests[0].Messages[1].Content
@@ -270,26 +279,36 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	if len(artifact.Segments) != 2 {
 		t.Fatalf("len(segments) = %d, want 2", len(artifact.Segments))
 	}
-	if artifact.Segments[0].Text != "第一段原文" {
-		t.Fatalf("segments[0].text = %q", artifact.Segments[0].Text)
+	if artifact.Segments[0].Index != 0 {
+		t.Fatalf("segments[0].index = %d", artifact.Segments[0].Index)
 	}
-	if artifact.Segments[0].Script != "第一段旁白。" {
-		t.Fatalf("segments[0].script = %q", artifact.Segments[0].Script)
+	if artifact.Segments[1].Index != 1 {
+		t.Fatalf("segments[1].index = %d", artifact.Segments[1].Index)
 	}
 	if len(artifact.Segments[0].Shots) != defaultShotsPerSegment {
 		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), defaultShotsPerSegment)
 	}
-	if artifact.Segments[0].Shots[0].Prompt != "主角在雨夜现身。" {
-		t.Fatalf("segments[0].shots[0].prompt = %q", artifact.Segments[0].Shots[0].Prompt)
+	if effectiveShotPrompt(artifact.Segments[0].Shots[0]) != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[0].Shots[0]))
 	}
-	if artifact.Segments[1].Shots[0].Prompt != "对手逼近。" {
-		t.Fatalf("segments[1].shots[0].prompt = %q", artifact.Segments[1].Shots[0].Prompt)
+	if effectiveShotPrompt(artifact.Segments[1].Shots[0]) != "对手逼近。" {
+		t.Fatalf("segments[1].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[1].Shots[0]))
 	}
-	if artifact.Segments[1].Shots[9].Prompt == "" {
-		t.Fatal("segments[1].shots[9].prompt = empty, want fallback-filled shot")
+	if effectiveShotPrompt(artifact.Segments[1].Shots[9]) == "" {
+		t.Fatal("segments[1].shots[9] effective prompt = empty, want fallback-filled shot")
 	}
 	if got.OutputRef["segment_count"] != 2 {
 		t.Fatalf("segment_count = %#v", got.OutputRef["segment_count"])
+	}
+	if _, err := os.Stat(
+		artifactFullPath(workspaceDir, "jobs/job_script_llm/script/segment_000.json"),
+	); err != nil {
+		t.Fatalf("Stat(segment_000.json) error = %v", err)
+	}
+	if _, err := os.Stat(
+		artifactFullPath(workspaceDir, "jobs/job_script_llm/script/segment_001.json"),
+	); err != nil {
+		t.Fatalf("Stat(segment_001.json) error = %v", err)
 	}
 }
 
@@ -381,8 +400,159 @@ func TestScriptExecutorExecuteParsesWrappedJSONResponse(t *testing.T) {
 	if len(artifact.Segments) != 1 {
 		t.Fatalf("len(segments) = %d, want 1", len(artifact.Segments))
 	}
-	if artifact.Segments[0].Shots[0].Prompt != "主角在雨夜现身。" {
-		t.Fatalf("segments[0].shots[0].prompt = %q", artifact.Segments[0].Shots[0].Prompt)
+	if effectiveShotPrompt(artifact.Segments[0].Shots[0]) != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[0].Shots[0]))
+	}
+}
+
+func TestScriptExecutorExecuteResumesFromSavedSegmentArtifacts(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	writer := newArtifactWriter(workspaceDir)
+	firstClient := &fakeTextClient{
+		responses: []TextResponse{
+			{
+				RequestID: "req_script_resume_1",
+				Model:     "qwen-plus",
+				Choices: []Choice{
+					{
+						Message: ChatMessage{
+							Role:    "assistant",
+							Content: `{"segments":[{"text":"第一段原文","script":"第一段旁白。","summary":"主角现身。","shots":[{"index":0,"prompt":"主角在雨夜现身。"}]}]}`,
+						},
+					},
+				},
+			},
+		},
+		errs: []error{nil, fmt.Errorf("upstream interrupted")},
+	}
+	executor := NewScriptExecutorWithClient(firstClient, TextGenerationConfig{
+		Model: "qwen-plus",
+	}, workspaceDir)
+	job := model.Job{ID: 4, PublicID: "job_script_resume"}
+	task := model.Task{
+		ID:   22,
+		Key:  "script",
+		Type: model.TaskTypeScript,
+		Payload: map[string]any{
+			"article":  "A short article for script generation.",
+			"voice_id": "default",
+		},
+		OutputRef: map[string]any{},
+	}
+	dependencies := map[string]model.Task{
+		"segmentation": {
+			Key: "segmentation",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_script_resume/segments.json",
+			},
+		},
+		"outline": {
+			Key: "outline",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_script_resume/outline.json",
+			},
+		},
+		"character_sheet": {
+			Key: "character_sheet",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_script_resume/character_sheet.json",
+			},
+		},
+	}
+	if err := writer.WriteJSON("jobs/job_script_resume/segments.json", SegmentationOutput{
+		Segments: []TextSegment{
+			{Index: 0, Text: "第一段原文", CharCount: 5},
+			{Index: 1, Text: "第二段原文", CharCount: 5},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(segmentation) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_script_resume/outline.json", OutlineOutput{
+		Mainline: "主角调查真相。",
+	}); err != nil {
+		t.Fatalf("WriteJSON(outline) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_script_resume/character_sheet.json", CharacterSheetOutput{
+		Characters: []CharacterProfile{
+			{Name: "阿莲", Role: "主角", Appearance: "警惕冷静", ReferenceSubjectType: "人"},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(character_sheet) error = %v", err)
+	}
+
+	_, err := executor.Execute(context.Background(), job, task, dependencies)
+	if err == nil {
+		t.Fatal("first Execute() error = nil, want interrupted error")
+	}
+	if len(firstClient.requests) != 2 {
+		t.Fatalf("len(firstClient.requests) = %d, want 2", len(firstClient.requests))
+	}
+	if _, err := os.Stat(
+		artifactFullPath(workspaceDir, "jobs/job_script_resume/script/segment_000.json"),
+	); err != nil {
+		t.Fatalf("Stat(saved segment_000.json) error = %v", err)
+	}
+	if _, err := os.Stat(
+		artifactFullPath(workspaceDir, "jobs/job_script_resume/script.json"),
+	); !os.IsNotExist(err) {
+		t.Fatalf("Stat(script.json) error = %v, want not exist", err)
+	}
+
+	resumeClient := &fakeTextClient{
+		responses: []TextResponse{
+			{
+				RequestID: "req_script_resume_2",
+				Model:     "qwen-plus",
+				Choices: []Choice{
+					{
+						Message: ChatMessage{
+							Role:    "assistant",
+							Content: `{"segments":[{"text":"第二段原文","script":"第二段旁白。","summary":"冲突升级。","shots":[{"index":0,"prompt":"对手逼近。"}]}]}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	resumeExecutor := NewScriptExecutorWithClient(resumeClient, TextGenerationConfig{
+		Model: "qwen-plus",
+	}, workspaceDir)
+
+	got, err := resumeExecutor.Execute(context.Background(), job, task, dependencies)
+	if err != nil {
+		t.Fatalf("resume Execute() error = %v", err)
+	}
+	if len(resumeClient.requests) != 1 {
+		t.Fatalf("len(resumeClient.requests) = %d, want 1", len(resumeClient.requests))
+	}
+	if !strings.Contains(resumeClient.requests[0].Messages[1].Content, `"text": "第二段原文"`) {
+		t.Fatalf("resume prompt = %q", resumeClient.requests[0].Messages[1].Content)
+	}
+	if strings.Contains(resumeClient.requests[0].Messages[1].Content, `"text": "第一段原文"`) {
+		t.Fatalf("resume prompt = %q, want only remaining segment", resumeClient.requests[0].Messages[1].Content)
+	}
+
+	artifact := readJSONArtifact[ScriptOutput](
+		t,
+		workspaceDir,
+		got.OutputRef["artifact_path"].(string),
+	)
+	if len(artifact.Segments) != 2 {
+		t.Fatalf("len(artifact.Segments) = %d, want 2", len(artifact.Segments))
+	}
+	if artifact.Segments[0].Index != 0 {
+		t.Fatalf("segments[0].index = %d", artifact.Segments[0].Index)
+	}
+	if artifact.Segments[1].Index != 1 {
+		t.Fatalf("segments[1].index = %d", artifact.Segments[1].Index)
+	}
+	if effectiveShotPrompt(artifact.Segments[0].Shots[0]) != "主角在雨夜现身。" {
+		t.Fatalf("segments[0].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[0].Shots[0]))
+	}
+	if effectiveShotPrompt(artifact.Segments[1].Shots[0]) != "对手逼近。" {
+		t.Fatalf("segments[1].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[1].Shots[0]))
 	}
 }
 
