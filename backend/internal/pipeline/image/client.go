@@ -22,10 +22,11 @@ type Client interface {
 }
 
 type Request struct {
-	Model          string
-	Prompt         string
-	Size           string
-	NegativePrompt string
+	Model           string
+	Prompt          string
+	ReferenceImages []string
+	Size            string
+	NegativePrompt  string
 }
 
 type Response struct {
@@ -135,15 +136,23 @@ func (c *HTTPClient) Generate(ctx context.Context, request Request) (Response, e
 }
 
 func buildRequestPayload(request Request) map[string]any {
+	content := make([]map[string]string, 0, len(request.ReferenceImages)+1)
+	for _, image := range request.ReferenceImages {
+		cleanImage := strings.TrimSpace(image)
+		if cleanImage == "" {
+			continue
+		}
+		content = append(content, map[string]string{"image": cleanImage})
+	}
+	content = append(content, map[string]string{"text": request.Prompt})
+
 	return map[string]any{
 		"model": request.Model,
 		"input": map[string]any{
 			"messages": []map[string]any{
 				{
-					"role": "user",
-					"content": []map[string]string{
-						{"text": request.Prompt},
-					},
+					"role":    "user",
+					"content": content,
 				},
 			},
 		},

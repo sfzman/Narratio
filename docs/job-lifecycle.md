@@ -38,8 +38,10 @@ type JobSpec struct {
 }
 
 type RenderOptions struct {
-    VoiceID    string
-    ImageStyle string
+    VoiceID     string
+    ImageStyle  string
+    AspectRatio string
+    VideoCount  *int
 }
 
 type Job struct {
@@ -74,8 +76,8 @@ type Task struct {
 
 约束：
 
-- `Task.Type` 表示业务语义，如 `segmentation`、`outline`、`character_sheet`、`character_image`、`tts`
-- `Task.ResourceKey` 表示资源语义，如 `local_cpu`、`llm_text`、`image_gen`
+- `Task.Type` 表示业务语义，如 `segmentation`、`outline`、`character_sheet`、`character_image`、`tts`、`shot_video`
+- `Task.ResourceKey` 表示资源语义，如 `local_cpu`、`llm_text`、`image_gen`、`video_gen`
 - 不允许把资源并发控制硬编码到 task type
 
 ## Job 状态
@@ -133,6 +135,8 @@ pending/ready -> skipped
 当前最小实现约束：
 
 - `app/jobs.CreateJob(spec)` 负责规范化默认值
+- 当前默认会把 `options.aspect_ratio` 规范化为 `9:16`
+- 当前默认会把 `options.video_count` 规范化为 `12`
 - 使用固定 workflow builder 生成首版 task DAG
 - 通过 store 的原子接口一次性写入 `job + tasks`
 - 当前实现会在入库成功后把 `job.ID` 投递给后台 runner
@@ -145,9 +149,9 @@ MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬
 ```text
 segmentation -----------\
 outline -----------------\
-character_sheet ----------> script ------------\
-character_sheet ----------> character_image ---> image ---> video
-segmentation -------------> tts ---------------/
+character_sheet ----------> script ----------------\
+character_sheet ----------> character_image ---> image ---> shot_video ---> video
+segmentation -------------> tts -----------------------------------------/
 ```
 
 在这个例子里：
@@ -157,9 +161,11 @@ segmentation -------------> tts ---------------/
 - `tts` 只依赖 `segmentation`，直接消费原文分段结果
 - `character_image` 依赖 `character_sheet`，用于独立产出人物参考图 artifact
 - `image` 依赖 `script` 和 `character_image`，普通配图与人物参考图在任务层分离
+- `shot_video` 依赖 `image`，用于逐 shot 产出“视频片段或静态图回退”的中间 manifest
 - `outline` 与 `character_sheet` 依赖 `llm_text`，`segmentation` 依赖 `local_cpu`
 - `character_image` 与 `image` 依赖 `image_gen`
-- `video` 依赖 `tts` 和 `image`
+- `shot_video` 依赖 `video_gen`
+- `video` 依赖 `tts` 和 `shot_video`
 
 ## 资源感知调度
 
@@ -173,6 +179,7 @@ const (
     ResourceLLMText    ResourceKey = "llm_text"
     ResourceTTS        ResourceKey = "tts"
     ResourceImageGen   ResourceKey = "image_gen"
+    ResourceVideoGen   ResourceKey = "video_gen"
     ResourceVideoRender ResourceKey = "video_render"
 )
 ```
@@ -183,6 +190,7 @@ const (
 - `llm_text`: 2
 - `tts`: 3
 - `image_gen`: 2
+- `video_gen`: 1
 - `video_render`: 1
 
 调度规则：
@@ -201,6 +209,8 @@ const (
 - 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
 - 当前 skeleton 已可让 script task 读取 segmentation / outline / character_sheet 的依赖产物
 - 当前 `character_image` 独立 task 已接入：成功后会把人物参考图 manifest 落盘到 workspace，并在非 live 模式下写出 fallback JPG
+- 当前 `shot_video` 独立 task 已接入：会读取 `image.shot_images`，默认写入 `image_fallback` clip 清单；若显式开启 `ENABLE_LIVE_VIDEO_GENERATION=true`，则会逐 shot 调真实图生视频并回填 `generated_video` clip
+- 当前 `shot_video.payload.video_count` 已接入：执行时会按 `segment_index / shot_index` 排序，只为前 `n` 个 shot 尝试真实图生视频，其余 shot 直接回退为 `image_fallback`
 - 当前最小后台 runner 已接入，默认会在 job 创建后自动持续推进
 - `POST /jobs/:id/dispatch-once` 仍保留为开发态接口；若同一 job 已在后台运行，该接口返回 no-op
 

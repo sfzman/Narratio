@@ -393,6 +393,93 @@ func TestDispatchOnceExecutesTTSAfterSegmentation(t *testing.T) {
 	}
 }
 
+func TestDispatchOncePromotesTTSReadyImmediatelyAfterSegmentationSucceeds(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_tts_ready",
+		Token:     "job_token_scheduler_tts_ready",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "segmentation",
+			Type:        model.TaskTypeSegmentation,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLocalCPU,
+			DependsOn:   []string{},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"article": "第一段。第二段。",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			Key:         "tts",
+			Type:        model.TaskTypeTTS,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceTTS,
+			DependsOn:   []string{"segmentation"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"voice_id": "default",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeSegmentation: scriptpipeline.NewSegmentationExecutor(""),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceLocalCPU: 1,
+			model.ResourceTTS:      1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	_, updatedJob, err := service.DispatchOnce(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+	if updatedJob.Progress != 50 {
+		t.Fatalf("job progress = %d, want 50", updatedJob.Progress)
+	}
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if persistedTasks[0].Status != model.TaskStatusSucceeded {
+		t.Fatalf("segmentation status = %q, want %q", persistedTasks[0].Status, model.TaskStatusSucceeded)
+	}
+	if persistedTasks[1].Status != model.TaskStatusReady {
+		t.Fatalf("tts status = %q, want %q", persistedTasks[1].Status, model.TaskStatusReady)
+	}
+}
+
 func TestDispatchOnceExecutesImageAfterScript(t *testing.T) {
 	t.Parallel()
 
@@ -404,10 +491,13 @@ func TestDispatchOnceExecutesImageAfterScript(t *testing.T) {
 		map[string]any{
 			"segments": []map[string]any{
 				{
-					"index":   0,
-					"text":    "scene text",
-					"script":  "voice over",
-					"summary": "night rain on the bridge",
+					"index": 0,
+					"shots": []map[string]any{
+						{
+							"index":                0,
+							"text_to_image_prompt": "night rain on the bridge",
+						},
+					},
 				},
 			},
 		},
@@ -743,17 +833,18 @@ func TestDispatchOnceExecutesVideoAndPersistsJobResult(t *testing.T) {
 			UpdatedAt: now,
 		},
 		{
-			Key:         "image",
-			Type:        model.TaskTypeImage,
+			Key:         "shot_video",
+			Type:        model.TaskTypeShotVideo,
 			Status:      model.TaskStatusSucceeded,
-			ResourceKey: model.ResourceImageGen,
-			DependsOn:   []string{},
+			ResourceKey: model.ResourceVideoGen,
+			DependsOn:   []string{"image"},
 			Attempt:     1,
 			MaxAttempts: 1,
-			Payload:     map[string]any{"image_style": "cinematic"},
+			Payload:     map[string]any{},
 			OutputRef: map[string]any{
-				"artifact_type": "image",
-				"artifact_path": "jobs/job_public_scheduler_video/images/image_manifest.json",
+				"artifact_type":     "shot_video",
+				"artifact_path":     "jobs/job_public_scheduler_video/shot_videos/manifest.json",
+				"image_source_type": "shot_images",
 			},
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -763,7 +854,7 @@ func TestDispatchOnceExecutesVideoAndPersistsJobResult(t *testing.T) {
 			Type:        model.TaskTypeVideo,
 			Status:      model.TaskStatusPending,
 			ResourceKey: model.ResourceVideoRender,
-			DependsOn:   []string{"tts", "image"},
+			DependsOn:   []string{"tts", "shot_video"},
 			Attempt:     0,
 			MaxAttempts: 1,
 			Payload:     map[string]any{},

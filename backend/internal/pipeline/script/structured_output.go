@@ -65,7 +65,12 @@ type ScriptOutput struct {
 	Segments []Segment `json:"segments"`
 }
 
-const defaultShotsPerSegment = 10
+const (
+	defaultShotsPerSegment = 10
+	minShotsPerSegment     = 3
+	charsPerShot           = 30
+	shortTailSegmentChars  = 80
+)
 
 type Segment struct {
 	Index int    `json:"index"`
@@ -370,24 +375,29 @@ func normalizeSegmentationOutput(output *SegmentationOutput) {
 func normalizeScriptOutput(output *ScriptOutput, segmentation SegmentationOutput) {
 	aligned := make([]Segment, 0, len(segmentation.Segments))
 	for index, source := range segmentation.Segments {
+		summary := summarizeArticle(source.Text, 120)
+		targetShots := targetShotCount(source)
 		item := Segment{
 			Index: source.Index,
 			Shots: buildDefaultShots(
 				source.Text,
-				summarizeArticle(source.Text, 120),
+				summary,
+				targetShots,
 			),
 		}
 		if index < len(output.Segments) {
 			item.Shots = normalizeShots(
 				output.Segments[index].Shots,
 				source.Text,
-				summarizeArticle(source.Text, 120),
+				summary,
+				targetShots,
 			)
 		}
 		item.Shots = normalizeShots(
 			item.Shots,
 			source.Text,
-			summarizeArticle(source.Text, 120),
+			summary,
+			targetShots,
 		)
 		aligned = append(aligned, item)
 	}
@@ -408,29 +418,30 @@ func buildStubScriptSegments(segmentation []TextSegment) []Segment {
 		summary := summarizeArticle(trimmed, 120)
 		items = append(items, Segment{
 			Index: source.Index,
-			Shots: buildDefaultShots(trimmed, summary),
+			Shots: buildDefaultShots(trimmed, summary, targetShotCount(source)),
 		})
 	}
 
 	return items
 }
 
-func normalizeShots(shots []Shot, text string, summary string) []Shot {
-	normalized := make([]Shot, 0, defaultShotsPerSegment)
+func normalizeShots(shots []Shot, text string, summary string, targetCount int) []Shot {
+	targetCount = normalizeShotCount(targetCount)
+	normalized := make([]Shot, 0, targetCount)
 	for _, shot := range shots {
 		item := normalizeShot(shot, len(normalized), summary)
 		if effectiveShotPrompt(item) == "" {
 			continue
 		}
 		normalized = append(normalized, item)
-		if len(normalized) == defaultShotsPerSegment {
+		if len(normalized) == targetCount {
 			return normalized
 		}
 	}
 
-	fallback := buildDefaultShots(text, summary)
+	fallback := buildDefaultShots(text, summary, targetCount)
 	for _, shot := range fallback {
-		if len(normalized) == defaultShotsPerSegment {
+		if len(normalized) == targetCount {
 			break
 		}
 		normalized = append(normalized, normalizeShot(shot, len(normalized), summary))
@@ -467,7 +478,8 @@ func normalizeShot(shot Shot, index int, summary string) Shot {
 	return item
 }
 
-func buildDefaultShots(text string, summary string) []Shot {
+func buildDefaultShots(text string, summary string, targetCount int) []Shot {
+	targetCount = normalizeShotCount(targetCount)
 	trimmedText := strings.TrimSpace(text)
 	trimmedSummary := strings.TrimSpace(summary)
 	if trimmedSummary == "" {
@@ -483,8 +495,8 @@ func buildDefaultShots(text string, summary string) []Shot {
 		}
 	}
 
-	shots := make([]Shot, 0, defaultShotsPerSegment)
-	for index := 0; index < defaultShotsPerSegment; index++ {
+	shots := make([]Shot, 0, targetCount)
+	for index := 0; index < targetCount; index++ {
 		prompt := trimmedSummary
 		if len(units) > 0 {
 			prompt = strings.TrimSpace(units[index%len(units)])
@@ -500,6 +512,30 @@ func buildDefaultShots(text string, summary string) []Shot {
 	}
 
 	return shots
+}
+
+func targetShotCount(segment TextSegment) int {
+	charCount := segment.CharCount
+	if charCount <= 0 {
+		charCount = countNonPunctuationChars(segment.Text)
+	}
+	if charCount <= 0 {
+		return defaultShotsPerSegment
+	}
+
+	count := (charCount + charsPerShot - 1) / charsPerShot
+	return normalizeShotCount(count)
+}
+
+func normalizeShotCount(count int) int {
+	switch {
+	case count < minShotsPerSegment:
+		return minShotsPerSegment
+	case count > defaultShotsPerSegment:
+		return defaultShotsPerSegment
+	default:
+		return count
+	}
 }
 
 func normalizeCharacterNames(values []string) []string {
@@ -623,7 +659,34 @@ func segmentArticle(article string, targetChars int) []string {
 		segments = append(segments, strings.TrimSpace(strings.Join(current, "")))
 	}
 
+	segments = rebalanceShortTailSegment(segments, targetChars)
 	return segments
+}
+
+func rebalanceShortTailSegment(segments []string, targetChars int) []string {
+	if len(segments) < 2 {
+		return segments
+	}
+
+	lastIndex := len(segments) - 1
+	tailText := strings.TrimSpace(segments[lastIndex])
+	tailChars := countNonPunctuationChars(tailText)
+	if tailChars == 0 || tailChars >= shortTailSegmentChars {
+		return segments
+	}
+
+	prevText := strings.TrimSpace(segments[lastIndex-1])
+	if prevText == "" {
+		return segments
+	}
+
+	maxMergedChars := targetChars + targetChars/3
+	if countNonPunctuationChars(prevText)+tailChars > maxMergedChars {
+		return segments
+	}
+
+	segments[lastIndex-1] = strings.TrimSpace(prevText + tailText)
+	return segments[:lastIndex]
 }
 
 func splitSentences(text string) []string {

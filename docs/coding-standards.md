@@ -172,8 +172,20 @@ type Config struct {
     DashScopeVideoBaseURL string
     DashScopeVideoModel  string
     DashScopeVideoAPIKey string
+    DashScopeVideoSubmitTimeoutSeconds int
+    DashScopeVideoPollIntervalSeconds int
+    DashScopeVideoMaxWaitSeconds int
+    DashScopeVideoMaxRequestBytes int
+    DashScopeVideoResolution string
+    DashScopeVideoNegativePrompt string
+    DashScopeVideoImageJPEGQuality int
+    DashScopeVideoImageMinJPEGQuality int
     TTSBaseURL           string
-    TTSAPIKey            string
+    TTSRequestTimeoutSeconds int
+    TTSJWTPrivateKey     string
+    TTSJWTExpireSeconds  int
+    TTSDefaultVoiceID    string
+    TTSEmotionPrompt     string
     WorkspaceDir         string
 }
 

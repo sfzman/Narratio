@@ -52,7 +52,9 @@
   "article": "这是一篇文章内容...",
   "options": {
     "voice_id": "default",
-    "image_style": "realistic"
+    "image_style": "realistic",
+    "aspect_ratio": "9:16",
+    "video_count": 12
   }
 }
 ```
@@ -62,6 +64,8 @@
 | article | string | ✅ | 文章内容，1~10000 字 |
 | options.voice_id | string | ❌ | TTS 音色 ID，默认 `default` |
 | options.image_style | string | ❌ | 图像风格，默认 `realistic` |
+| options.aspect_ratio | string | ❌ | 画幅比例；当前只支持 `16:9`（横屏）和 `9:16`（竖屏），默认 `9:16` |
+| options.video_count | integer | ❌ | 只为按分镜顺序的前 `n` 个 shot 生成视频；默认 `12`，其余 shot 在 `shot_video` 中直接回退为静态图 |
 
 **Response 202**
 ```json
@@ -81,6 +85,8 @@
 - 当前实现会在创建成功后自动启动后台调度
 - 前端不需要再依赖手动点击 `Dispatch Once` 才能推进 job
 - 当前接口不再接收 `language` 字段；整个生成链路默认按中文内容处理
+- `options.aspect_ratio` 若未传，后端会规范化为 `9:16`
+- `options.video_count` 若未传，后端会规范化为 `12`
 
 ---
 
@@ -97,11 +103,11 @@
     "created_at": "2024-01-15T10:30:00Z",
     "updated_at": "2024-01-15T10:31:30Z",
     "tasks": {
-      "total": 8,
+      "total": 9,
       "pending": 1,
       "ready": 1,
       "running": 1,
-      "succeeded": 5,
+      "succeeded": 6,
       "failed": 0,
       "cancelled": 0,
       "skipped": 0
@@ -183,11 +189,25 @@
 
 - `output_ref.artifact_path` 始终是相对 `WORKSPACE_DIR` 的路径
 - `script` task 额外会返回 `output_ref.segment_artifact_dir`，指向 `jobs/{job_id}/script`；该目录下会逐段写出 `segment_{index}.json`
-- 对 `segmentation / outline / character_sheet / script / tts / character_image / image`，该路径现在应指向已经真实落盘的 JSON artifact
+- `image` task 当前会额外返回 `output_ref.image_count`（segment 级兼容图片数）与 `output_ref.shot_image_count`（shot 级 manifest 条目数）
+- `image.output_ref.generated_image_count / fallback_image_count` 当前都是按 `shot_images` 统计，而不是按 segment 摘要图统计
+- `shot_video` task 当前会额外返回 `output_ref.clip_count`、`output_ref.generated_video_count`、`output_ref.fallback_image_count`、`output_ref.generation_mode`
+- `shot_video` task 当前会额外返回 `output_ref.requested_video_count / selected_video_count`，分别表示请求的前 `n` 个与实际参与图生视频的前 `n` 个
+- `shot_video.output_ref.generation_mode` 当前正式取值为 `generated_video`、`image_fallback` 或 `mixed`
+- `shot_video.clips[*].status` 当前正式枚举为 `generated_video` 或 `image_fallback`
+- `shot_video.clips[*].source_image_path` 当前会稳定保留上游 shot image 路径，供未来真实图生视频接入时追踪输入来源
+- `tts` task 当前会额外返回 `output_ref.generation_mode`，用于标记本次走的是 `placeholder` 还是 `sentence_serial`
+- `video` task 当前会额外返回 `output_ref.shot_video_artifact_ref`，并继续透传 `output_ref.image_source_type`
+- `video.output_ref.duration_seconds` 当前表示视觉拼接总时长；同时会额外返回 `output_ref.narration_duration_seconds` 与 `output_ref.visual_duration_seconds`
+- 对 `segmentation / outline / character_sheet / script / tts / character_image / image / shot_video`，该路径现在应指向已经真实落盘的 JSON artifact
 - 默认 DAG 里，`script.depends_on = ["segmentation", "outline", "character_sheet"]`
 - 默认 DAG 里，`tts.depends_on = ["segmentation"]`
 - 默认 DAG 里，`character_image.depends_on = ["character_sheet"]`
 - 默认 DAG 里，`image.depends_on = ["script", "character_image"]`
+- 默认 DAG 里，`shot_video.depends_on = ["image"]`
+- 默认 DAG 里，`video.depends_on = ["tts", "shot_video"]`
+- 默认 DAG 里，`image.payload.aspect_ratio / shot_video.payload.aspect_ratio / video.payload.aspect_ratio` 会透传 `options.aspect_ratio`
+- 默认 DAG 里，`shot_video.payload.video_count` 会透传 `options.video_count`；当前执行语义是“只对排序后的前 `n` 个 shot 尝试图生视频，其余直接登记为 `image_fallback`”
 
 ---
 
@@ -230,7 +250,7 @@ Accept-Ranges: bytes
 
 - `queued` 任务取消后直接变为 `cancelled`
 - `running` 任务取消后先返回 `cancelling`，前端继续轮询，直到状态变为 `cancelled`
-- 已完成任务可复用该接口删除产物文件；此时 `cancelled=false`，`deleted=true`
+- 当前版本尚未实现“已完成任务删除产物文件”；因此当前 `deleted` 固定为 `false`
 
 ---
 
@@ -296,15 +316,17 @@ Accept-Ranges: bytes
 
 - 当前 health 接口反映的是服务 bootstrap 结果和关键配置是否存在
 - 当相关 API Key 已配置但 live 开关未打开时，`dashscope_text` / `dashscope_image` 会返回 `configured_but_disabled`
-- 还没有对 DashScope、TTS、FFmpeg 做真实联通性探测
+- 当前 health 接口仍不会主动探测 DashScope / TTS 联通性；但 runtime 启动阶段现在会先检查本机 `ffmpeg` 是否可用
 
 当前已实现接口：
 
 - `POST /api/v1/jobs` 已实现
 - `GET /api/v1/jobs/:job_id` 已实现，返回 job 状态和 task 聚合统计
 - `GET /api/v1/jobs/:job_id/tasks` 已实现，返回 task 明细
+- `GET /api/v1/jobs/:job_id/download` 已实现，返回最终视频文件流并支持 Range
+- `DELETE /api/v1/jobs/:job_id` 已实现，支持最小取消语义
 - `POST /api/v1/jobs/:job_id/dispatch-once` 已实现，仅用于开发态手动推进 task
-- `DELETE /api/v1/jobs/:job_id`、下载接口、音色列表接口尚未实现
+- 音色列表接口尚未实现
 
 ---
 

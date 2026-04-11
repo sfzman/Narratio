@@ -62,6 +62,7 @@ DATABASE_DRIVER=sqlite
 DATABASE_DSN=./narratio.db
 ENABLE_LIVE_TEXT_GENERATION=false
 ENABLE_LIVE_IMAGE_GENERATION=false
+ENABLE_LIVE_VIDEO_GENERATION=false
 
 DASHSCOPE_TEXT_API_KEY=your-dashscope-text-key-here
 DASHSCOPE_TEXT_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
@@ -74,33 +75,59 @@ DASHSCOPE_IMAGE_MODEL=qwen-image-2.0
 DASHSCOPE_VIDEO_API_KEY=your-dashscope-video-key-here
 DASHSCOPE_VIDEO_BASE_URL=https://dashscope.aliyuncs.com
 DASHSCOPE_VIDEO_MODEL=wan2.6-i2v-flash
+DASHSCOPE_VIDEO_SUBMIT_TIMEOUT_SECONDS=60
+DASHSCOPE_VIDEO_POLL_INTERVAL_SECONDS=10
+DASHSCOPE_VIDEO_MAX_WAIT_SECONDS=900
+DASHSCOPE_VIDEO_MAX_REQUEST_BYTES=6291456
+DASHSCOPE_VIDEO_RESOLUTION=720P
+DASHSCOPE_VIDEO_NEGATIVE_PROMPT=
+DASHSCOPE_VIDEO_IMAGE_JPEG_QUALITY=80
+DASHSCOPE_VIDEO_IMAGE_MIN_JPEG_QUALITY=45
 
 TTS_API_BASE_URL=https://your-tts-service.com
-TTS_API_KEY=your-tts-key-here
+TTS_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+TTS_JWT_EXPIRE_SECONDS=300
+TTS_REQUEST_TIMEOUT_SECONDS=300
+TTS_DEFAULT_VOICE_ID=male_calm
+TTS_EMOTION_PROMPT=https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/male-read-emo.wav
 
 WORKSPACE_DIR=./workspace
 SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS=200
+SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS=200
+VIDEO_RENDER_TIMEOUT_SECONDS=1800
+FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS=10
+SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 ```
 
 当前代码状态：
 
-- `cmd/server` 目前已完成配置读取、SQLite store 初始化、`segmentation / outline / character_sheet / script / character_image / tts / image / video` executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
+- `cmd/server` 目前已完成配置读取、SQLite store 初始化、`segmentation / outline / character_sheet / script / character_image / tts / image / shot_video / video` executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
 - 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health`、`POST /api/v1/jobs`、`GET /api/v1/jobs/:job_id`、`GET /api/v1/jobs/:job_id/tasks` 与开发态 `POST /api/v1/jobs/:job_id/dispatch-once`
 - SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
 - 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
-- `segmentation / outline / character_sheet / script / tts / character_image / image` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
+- `segmentation / outline / character_sheet / script / tts / character_image / image / shot_video` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
+- `video` 在 runtime 中已切到真实 FFmpeg 渲染路径；成功后会把最终成片写到 `WORKSPACE_DIR/jobs/{job_id}/output/final.mp4`
+- 服务启动时会先执行一次 FFmpeg 启动检查；若本机 `ffmpeg` 不可用，runtime 会直接启动失败
 - `image` / `character_image` 已支持注入真实 DashScope client；只有显式打开 `ENABLE_LIVE_IMAGE_GENERATION=true` 且配置了 `DASHSCOPE_IMAGE_API_KEY` 时，才会尝试真实图片请求
 
 注意：
 
 - 当前默认是 skeleton 模式，`ENABLE_LIVE_TEXT_GENERATION=false`
 - 图片默认也仍是 skeleton 模式，`ENABLE_LIVE_IMAGE_GENERATION=false`
+- `shot_video` 当前已支持真实图生视频；但默认仍受 `ENABLE_LIVE_VIDEO_GENERATION=false` 保护，关闭时会稳定回退到 `image_fallback`
+- `SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS` 用来控制 `shot_video` task 的整体 execution deadline 预算；当前会按“前 `video_count` 个真正参与图生视频的 shot 数量 * 每 shot 超时”动态计算，默认 `200` 秒/shot
+- `SHOT_VIDEO_DEFAULT_DURATION_SECONDS` 用来控制 `shot_video` manifest 中每个 clip 的默认时长，默认 `3` 秒
+- `VIDEO_RENDER_TIMEOUT_SECONDS` 用来控制 `video` task 的执行超时，默认 `1800` 秒
+- `FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS` 用来控制服务启动时 `ffmpeg -version` 检查超时，默认 `10` 秒
+- 当前代码已支持按 `ENABLE_LIVE_VIDEO_GENERATION=true` 条件组装真实 DashScope 视频 client；即使该开关关闭，`video` 仍会基于 fallback 图 + TTS 真实合成最终 MP4
 - 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口；`segmentation` 始终走本地 deterministic 路径
 - 即使配置了 `DASHSCOPE_IMAGE_API_KEY`，只要不显式打开该开关，`image` / `character_image` 也不会调用真实 DashScope 图像接口
+- 即使已经配置了 `DASHSCOPE_VIDEO_*` 这组参数，若不显式打开 `ENABLE_LIVE_VIDEO_GENERATION=true`，当前版本也不会启用真实图生视频
+- 即使显式打开了 `ENABLE_LIVE_VIDEO_GENERATION=true`，也建议先确认 `character_image` / `image` 已经跑出稳定的真实 shot 图片；`shot_video` 只消费 `images/image_manifest.json.shot_images[*]`，不会直接消费人物参考图
 
 ### 最小真实联调：只打开 live image
 
-当需要验证 `segmentation -> ... -> image -> video` 这条链路是否能在真实出图下跑通时，建议只打开 `ENABLE_LIVE_IMAGE_GENERATION=true`，其余模块继续保持 skeleton。这样可以把联调成本控制在最低，也避免污染日常开发数据库和 workspace。
+当需要验证 `segmentation -> ... -> image -> video` 这条链路是否能在真实出图下跑通时，建议只打开 `ENABLE_LIVE_IMAGE_GENERATION=true`，其余模块继续保持默认。这样可以把联调成本控制在最低，也避免污染日常开发数据库和 workspace；此时最终 `video` 仍会用 fallback shot clip + TTS 真正产出 MP4。
 
 下面这组命令会：
 
@@ -114,6 +141,60 @@ SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS=200
 ```bash
 ./backend/scripts/live_image_smoke.sh
 ```
+
+当前这份 smoke 脚本除了拉起临时服务、提交最小 job 之外，还会在 job 完成后直接核对 3 个检查点：
+
+- `character_images/manifest.json` 已落盘，且 manifest 里声明的参考图文件都真实存在
+- `images/image_manifest.json.shot_images[*]` 至少包含 `segment_index / shot_index / file_path / prompt`
+- 若本轮真实出图有远端下载源，summary 会统计 `character_image` / `shot_images` 上的 `source_image_url` 回填数量
+
+如果想单独验证“`image_to_image` 是否真的把人物参考图带进了请求”，可以直接运行：
+
+```bash
+./backend/scripts/live_image_reference_smoke.sh
+```
+
+这条脚本不会走整条 job 流水线，而是直接用固定 fixture 调 `character_image` / `image` executor，重点核对：
+
+- 至少有 1 个 `image_to_image` shot
+- 至少有 1 次真实图片请求带了 `reference_images`
+- 请求 prompt 已把人物名替换成 `图1中的人物`
+
+如果想继续验证“`shot_video` 是否真的把 shot image 变成了真实视频片段”，可以直接运行：
+
+```bash
+./backend/scripts/live_shot_video_smoke.sh
+```
+
+这条脚本同样使用固定 fixture，重点核对：
+
+- 至少有 1 个 clip 的 `status = generated_video`
+- `shot_videos/manifest.json` 已落盘
+- `video_path / source_image_path / source_video_url` 已稳定回填
+
+如果想继续验证“最终 `video` 是否真的把 `tts + shot_video` 渲染成成片”，可以直接运行：
+
+```bash
+./backend/scripts/live_video_render_smoke.sh
+```
+
+这条脚本同样使用固定 fixture，重点核对：
+
+- `output/final.mp4` 已真实落盘
+- 最终文件大小大于 0，且 `duration_seconds` 可读
+- 真实 `generated_video` clip 与 TTS 音频能够一起完成最终 mux
+
+如果想继续验证“服务级下载接口是否真的能把最终成片流出来”，可以直接运行：
+
+```bash
+./backend/scripts/e2e_video_download_smoke.sh
+```
+
+这条脚本会真实拉起后端服务、创建最小 job、等待完成，然后检查：
+
+- `GET /api/v1/jobs/:job_id/download` 能返回完整 `video/mp4`
+- `Content-Disposition` 为附件下载
+- `Range` 请求能返回 `206 Partial Content`
 
 ```bash
 cd backend
@@ -157,12 +238,16 @@ curl -sS http://127.0.0.1:18080/api/v1/jobs/<job_id>/tasks
 
 当前代码状态下，一轮成功的最小 live image 联调可重点确认：
 
+- `jobs/<job_id>/character_images/manifest.json` 已落盘，且 `character_images[*].file_path` 对应文件真实存在
 - `job.status = completed`
 - `image.output_ref.generated_image_count > 0`
 - `image.output_ref.fallback_image_count = 0`（若真实出图成功）
 - `jobs/<job_id>/images/image_manifest.json` 已落盘，且包含 `generation_request_id`、`generation_model`、`source_image_url`
-- `jobs/<job_id>/images/segment_000.jpg` 已真实落盘
-- `tts` 仍然只会生成 `tts_manifest.json`、`subtitles.srt` 和占位 WAV；这是当前预期行为
+- `jobs/<job_id>/images/segment_000_shot_000.jpg` 这类 shot 级图片已真实落盘
+- `image.output_ref.image_count` 只是 segment 级兼容摘要数；真实出图主路径看 `shot_image_count`
+- 如果后续要继续做 `shot_video` 真实联调，至少再确认 `image_manifest.json.shot_images[*]` 里的 `segment_index / shot_index / file_path / prompt` 都稳定存在；`source_image_url` 有则更好，但不是硬前置
+- 若未同时配置 `TTS_API_BASE_URL` 与 `TTS_JWT_PRIVATE_KEY`，`tts` 仍然只会生成 `tts_manifest.json` 和占位 WAV；这是当前预期行为
+- 若同时配置了 `TTS_API_BASE_URL` 与 `TTS_JWT_PRIVATE_KEY`，runtime 会自动接入真实 TTS client；执行时会按 segment 文本内的句号逐句串行合成，再合并成 segment 级 WAV
 
 ## 项目结构（完整）
 

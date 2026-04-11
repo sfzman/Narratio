@@ -14,8 +14,10 @@ type createJobRequest struct {
 }
 
 type createRenderOptions struct {
-	VoiceID    string `json:"voice_id"`
-	ImageStyle string `json:"image_style"`
+	VoiceID     string `json:"voice_id"`
+	ImageStyle  string `json:"image_style"`
+	AspectRatio string `json:"aspect_ratio"`
+	VideoCount  *int   `json:"video_count"`
 }
 
 func (h Handlers) createJob(c *gin.Context) {
@@ -57,12 +59,21 @@ func validateCreateJobRequest(request createJobRequest) (model.JobSpec, error) {
 	if len([]rune(article)) > 10000 {
 		return model.JobSpec{}, errInvalidArticle("文章内容不能超过10000字")
 	}
+	aspectRatio := model.ParseAspectRatio(request.Options.AspectRatio)
+	if request.Options.AspectRatio != "" && !aspectRatio.IsValid() {
+		return model.JobSpec{}, errInvalidArticle("aspect_ratio 只支持 16:9 或 9:16")
+	}
+	if request.Options.VideoCount != nil && *request.Options.VideoCount < 0 {
+		return model.JobSpec{}, errInvalidArticle("video_count 不能小于0")
+	}
 
 	return model.JobSpec{
 		Article: article,
 		Options: model.RenderOptions{
-			VoiceID:    strings.TrimSpace(request.Options.VoiceID),
-			ImageStyle: strings.TrimSpace(request.Options.ImageStyle),
+			VoiceID:     strings.TrimSpace(request.Options.VoiceID),
+			ImageStyle:  strings.TrimSpace(request.Options.ImageStyle),
+			AspectRatio: aspectRatio,
+			VideoCount:  request.Options.VideoCount,
 		},
 	}, nil
 }

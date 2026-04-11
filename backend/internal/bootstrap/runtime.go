@@ -30,6 +30,8 @@ type Runtime struct {
 	Store            *sqlstore.Store
 	TextClient       scriptpipeline.TextClient
 	ImageClient      imagepipeline.Client
+	TTSClient        ttspipeline.Client
+	VideoClient      videopipeline.Client
 	ExecutorRegistry *scheduler.ExecutorRegistry
 	RunCoordinator   *jobapp.RunCoordinator
 	BackgroundRunner *jobapp.BackgroundRunner
@@ -38,6 +40,16 @@ type Runtime struct {
 	SchedulerService *scheduler.Service
 	ResourceManager  scheduler.ResourceManager
 	Router           http.Handler
+}
+
+var probeFFmpegAvailability = func(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return videopipeline.CheckFFmpegAvailable(ctx, nil)
 }
 
 func (r *Runtime) Close() error {
@@ -61,6 +73,11 @@ func LoadRuntime() (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	if err := probeFFmpegAvailability(
+		time.Duration(cfg.FFmpegStartupCheckTimeoutSeconds) * time.Second,
+	); err != nil {
+		return nil, fmt.Errorf("ffmpeg startup check: %w", err)
+	}
 
 	db, err := openDatabase(cfg)
 	if err != nil {
@@ -73,6 +90,16 @@ func LoadRuntime() (*Runtime, error) {
 		return nil, err
 	}
 	imageClient, err := buildImageClient(cfg)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	ttsClient, err := buildTTSClient(cfg)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	videoClient, err := buildVideoClient(cfg)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -107,18 +134,39 @@ func LoadRuntime() (*Runtime, error) {
 			imageGenerationConfig,
 			cfg.WorkspaceDir,
 		),
-		model.TaskTypeTTS: ttspipeline.NewExecutor(cfg.WorkspaceDir),
+		model.TaskTypeTTS: ttspipeline.NewExecutorWithClient(ttsClient, cfg.WorkspaceDir),
 		model.TaskTypeImage: imagepipeline.NewExecutorWithClient(
 			imageClient,
 			imageGenerationConfig,
 			cfg.WorkspaceDir,
 		),
-		model.TaskTypeVideo: videopipeline.NewExecutor(cfg.WorkspaceDir),
+		model.TaskTypeShotVideo: videopipeline.NewShotVideoExecutorWithClient(
+			videoClient,
+			videopipeline.GenerationConfig{
+				Model:               cfg.DashScopeVideoModel,
+				Resolution:          cfg.DashScopeVideoResolution,
+				NegativePrompt:      cfg.DashScopeVideoNegativePrompt,
+				PollInterval:        time.Duration(cfg.DashScopeVideoPollIntervalSeconds) * time.Second,
+				MaxWait:             time.Duration(cfg.DashScopeVideoMaxWaitSeconds) * time.Second,
+				MaxRequestBytes:     cfg.DashScopeVideoMaxRequestBytes,
+				ImageJPEGQuality:    cfg.DashScopeVideoImageJPEGQuality,
+				ImageMinJPEGQuality: cfg.DashScopeVideoImageMinJPEGQuality,
+			},
+			cfg.WorkspaceDir,
+			float64(cfg.ShotVideoDefaultDurationSeconds),
+		),
+		model.TaskTypeVideo: videopipeline.NewRealExecutor(cfg.WorkspaceDir),
 	})
 	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)
 	schedulerService.SetScriptTimeoutPerSegment(
 		time.Duration(cfg.ScriptTimeoutPerSegmentSeconds) * time.Second,
+	)
+	schedulerService.SetShotVideoTimeoutPerShot(
+		time.Duration(cfg.ShotVideoTimeoutPerShotSeconds) * time.Second,
+	)
+	schedulerService.SetVideoRenderTimeout(
+		time.Duration(cfg.VideoRenderTimeoutSeconds) * time.Second,
 	)
 	runCoordinator := jobapp.NewRunCoordinator()
 	backgroundRunner := jobapp.NewBackgroundRunner(schedulerService, runCoordinator)
@@ -130,20 +178,28 @@ func LoadRuntime() (*Runtime, error) {
 			"database":        "ok",
 			"dashscope_text":  textHealthStatus(cfg),
 			"dashscope_image": imageHealthStatus(cfg),
-			"tts":             healthStatus(cfg.TTSAPIKey != ""),
+			"dashscope_video": videoHealthStatus(cfg),
+			"tts":             healthStatus(cfg.TTSBaseURL != "" && cfg.TTSJWTPrivateKey != ""),
 		},
-	})
+	}, cfg.WorkspaceDir)
 
 	slog.Info("runtime initialized",
 		"database_driver", cfg.DatabaseDriver,
 		"database_dsn", cfg.DatabaseDSN,
 		"script_timeout_per_segment_seconds", cfg.ScriptTimeoutPerSegmentSeconds,
+		"shot_video_timeout_per_shot_seconds", cfg.ShotVideoTimeoutPerShotSeconds,
+		"video_render_timeout_seconds", cfg.VideoRenderTimeoutSeconds,
+		"ffmpeg_startup_check_timeout_seconds", cfg.FFmpegStartupCheckTimeoutSeconds,
+		"shot_video_default_duration_seconds", cfg.ShotVideoDefaultDurationSeconds,
 		"live_text_generation", cfg.EnableLiveTextGeneration,
 		"live_image_generation", cfg.EnableLiveImageGeneration,
+		"live_video_generation", cfg.EnableLiveVideoGeneration,
 		"dashscope_text_base_url", cfg.DashScopeTextBaseURL,
 		"dashscope_text_model", cfg.DashScopeTextModel,
 		"dashscope_image_base_url", cfg.DashScopeImageBaseURL,
 		"dashscope_image_model", cfg.DashScopeImageModel,
+		"dashscope_video_base_url", cfg.DashScopeVideoBaseURL,
+		"dashscope_video_model", cfg.DashScopeVideoModel,
 	)
 
 	return &Runtime{
@@ -152,6 +208,8 @@ func LoadRuntime() (*Runtime, error) {
 		Store:            store,
 		TextClient:       textClient,
 		ImageClient:      imageClient,
+		TTSClient:        ttsClient,
+		VideoClient:      videoClient,
 		ExecutorRegistry: registry,
 		RunCoordinator:   runCoordinator,
 		BackgroundRunner: backgroundRunner,
@@ -233,6 +291,7 @@ func defaultResourceLimits() map[model.ResourceKey]int {
 		model.ResourceLLMText:     2,
 		model.ResourceTTS:         3,
 		model.ResourceImageGen:    2,
+		model.ResourceVideoGen:    1,
 		model.ResourceVideoRender: 1,
 	}
 }
@@ -261,6 +320,17 @@ func imageHealthStatus(cfg *config.Config) string {
 		return "not_configured"
 	}
 	if !cfg.EnableLiveImageGeneration {
+		return "configured_but_disabled"
+	}
+
+	return "configured"
+}
+
+func videoHealthStatus(cfg *config.Config) string {
+	if cfg.DashScopeVideoAPIKey == "" {
+		return "not_configured"
+	}
+	if !cfg.EnableLiveVideoGeneration {
 		return "configured_but_disabled"
 	}
 
@@ -302,6 +372,56 @@ func buildImageClient(cfg *config.Config) (imagepipeline.Client, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build dashscope image client: %w", err)
+	}
+
+	return client, nil
+}
+
+func buildTTSClient(cfg *config.Config) (ttspipeline.Client, error) {
+	if cfg.TTSBaseURL == "" {
+		return nil, nil
+	}
+
+	client, err := ttspipeline.NewHTTPClient(
+		cfg.TTSBaseURL,
+		cfg.TTSJWTPrivateKey,
+		cfg.TTSJWTExpireSeconds,
+		cfg.TTSDefaultVoiceID,
+		cfg.TTSEmotionPrompt,
+		&http.Client{Timeout: time.Duration(cfg.TTSRequestTimeoutSeconds) * time.Second},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build tts client: %w", err)
+	}
+
+	return client, nil
+}
+
+func buildVideoClient(cfg *config.Config) (videopipeline.Client, error) {
+	if !cfg.EnableLiveVideoGeneration {
+		return nil, nil
+	}
+	if cfg.DashScopeVideoAPIKey == "" {
+		return nil, nil
+	}
+
+	client, err := videopipeline.NewHTTPClient(
+		cfg.DashScopeVideoBaseURL,
+		cfg.DashScopeVideoAPIKey,
+		videopipeline.GenerationConfig{
+			Model:               cfg.DashScopeVideoModel,
+			Resolution:          cfg.DashScopeVideoResolution,
+			NegativePrompt:      cfg.DashScopeVideoNegativePrompt,
+			PollInterval:        time.Duration(cfg.DashScopeVideoPollIntervalSeconds) * time.Second,
+			MaxWait:             time.Duration(cfg.DashScopeVideoMaxWaitSeconds) * time.Second,
+			MaxRequestBytes:     cfg.DashScopeVideoMaxRequestBytes,
+			ImageJPEGQuality:    cfg.DashScopeVideoImageJPEGQuality,
+			ImageMinJPEGQuality: cfg.DashScopeVideoImageMinJPEGQuality,
+		},
+		&http.Client{Timeout: time.Duration(cfg.DashScopeVideoSubmitTimeoutSeconds) * time.Second},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build dashscope video client: %w", err)
 	}
 
 	return client, nil

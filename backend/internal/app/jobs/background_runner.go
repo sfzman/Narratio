@@ -17,12 +17,12 @@ const (
 
 type RunCoordinator struct {
 	mu     sync.Mutex
-	active map[int64]struct{}
+	active map[int64]context.CancelFunc
 }
 
 func NewRunCoordinator() *RunCoordinator {
 	return &RunCoordinator{
-		active: make(map[int64]struct{}),
+		active: make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -34,7 +34,7 @@ func (c *RunCoordinator) TryAcquire(jobID int64) bool {
 		return false
 	}
 
-	c.active[jobID] = struct{}{}
+	c.active[jobID] = nil
 	return true
 }
 
@@ -43,6 +43,57 @@ func (c *RunCoordinator) Release(jobID int64) {
 	defer c.mu.Unlock()
 
 	delete(c.active, jobID)
+}
+
+func (c *RunCoordinator) IsActive(jobID int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	_, ok := c.active[jobID]
+	return ok
+}
+
+func (c *RunCoordinator) IsRunning(jobID int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cancel, ok := c.active[jobID]
+	return ok && cancel != nil
+}
+
+func (c *RunCoordinator) SetCancel(jobID int64, cancel context.CancelFunc) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.active[jobID]; !ok {
+		return false
+	}
+	c.active[jobID] = cancel
+	return true
+}
+
+func (c *RunCoordinator) ClearCancel(jobID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.active[jobID]; ok {
+		c.active[jobID] = nil
+	}
+}
+
+func (c *RunCoordinator) Cancel(jobID int64) bool {
+	c.mu.Lock()
+	cancel, ok := c.active[jobID]
+	c.mu.Unlock()
+
+	if !ok {
+		return false
+	}
+	if cancel != nil {
+		cancel()
+	}
+
+	return true
 }
 
 type BackgroundRunner struct {
@@ -92,6 +143,30 @@ func (r *BackgroundRunner) Enqueue(jobID int64) {
 	}
 }
 
+func (r *BackgroundRunner) Cancel(jobID int64) bool {
+	if r == nil || r.coordinator == nil {
+		return false
+	}
+
+	return r.coordinator.Cancel(jobID)
+}
+
+func (r *BackgroundRunner) IsActive(jobID int64) bool {
+	if r == nil || r.coordinator == nil {
+		return false
+	}
+
+	return r.coordinator.IsActive(jobID)
+}
+
+func (r *BackgroundRunner) IsRunning(jobID int64) bool {
+	if r == nil || r.coordinator == nil {
+		return false
+	}
+
+	return r.coordinator.IsRunning(jobID)
+}
+
 func (r *BackgroundRunner) Close() error {
 	if r == nil {
 		return nil
@@ -114,7 +189,13 @@ func (r *BackgroundRunner) loop() {
 func (r *BackgroundRunner) runJob(jobID int64) {
 	for step := 0; step < r.maxDispatchStep; step++ {
 		dispatchCtx, cancel := context.WithTimeout(context.Background(), r.dispatchTimeout)
+		if r.coordinator != nil {
+			r.coordinator.SetCancel(jobID, cancel)
+		}
 		result, job, err := r.dispatcher.DispatchOnce(dispatchCtx, jobID)
+		if r.coordinator != nil {
+			r.coordinator.ClearCancel(jobID)
+		}
 		cancel()
 		if err != nil {
 			r.log.Error("background dispatch failed", "job_id", jobID, "step", step+1, "error", err)

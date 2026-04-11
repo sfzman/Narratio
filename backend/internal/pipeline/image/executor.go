@@ -2,8 +2,11 @@ package image
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -11,9 +14,12 @@ import (
 )
 
 const (
-	defaultImageWidth  = 1280
-	defaultImageHeight = 720
-	maxPromptShots     = 3
+	defaultImageWidth        = 1280
+	defaultImageHeight       = 720
+	defaultImageMaxEdge      = defaultImageWidth
+	maxPromptShots           = 3
+	maxReferenceImages       = 3
+	maxImageGenerateAttempts = 3
 )
 
 type Executor struct {
@@ -57,6 +63,7 @@ func (e *Executor) Execute(
 		)
 		return task, err
 	}
+	aspectRatio := resolveImageAspectRatio(task.Payload)
 
 	scriptTask, ok := dependencies["script"]
 	if !ok {
@@ -91,7 +98,14 @@ func (e *Executor) Execute(
 	)
 
 	artifactPath := fmt.Sprintf("jobs/%s/images/image_manifest.json", job.PublicID)
-	output, err := e.generateOutput(ctx, job.PublicID, imageStyle, scriptOutput, characterImages)
+	output, err := e.generateOutput(
+		ctx,
+		job.PublicID,
+		imageStyle,
+		aspectRatio,
+		scriptOutput,
+		characterImages,
+	)
 	if err != nil {
 		return task, err
 	}
@@ -105,9 +119,11 @@ func (e *Executor) Execute(
 		"script_artifact_ref":          scriptTask.OutputRef["artifact_path"],
 		"character_image_artifact_ref": characterImageTask.OutputRef["artifact_path"],
 		"image_style":                  imageStyle,
+		"aspect_ratio":                 string(aspectRatio),
 		"image_count":                  len(output.Images),
-		"generated_image_count":        countGeneratedImages(output.Images),
-		"fallback_image_count":         countFallbackImages(output.Images),
+		"shot_image_count":             len(output.ShotImages),
+		"generated_image_count":        countGeneratedShotImages(output.ShotImages),
+		"fallback_image_count":         countFallbackShotImages(output.ShotImages),
 		"character_reference_count":    len(characterImages.Images),
 		"images":                       output.Images,
 	}
@@ -127,53 +143,108 @@ func (e *Executor) generateOutput(
 	ctx context.Context,
 	jobPublicID string,
 	imageStyle string,
+	aspectRatio model.AspectRatio,
 	scriptOutput scriptArtifactOutput,
 	characterImages CharacterImageOutput,
 ) (ImageOutput, error) {
-	output := buildImageOutput(jobPublicID, imageStyle, scriptOutput, characterImages)
-	if err := e.generateLiveImages(ctx, output.Images); err != nil {
+	output := buildImageOutput(
+		jobPublicID,
+		imageStyle,
+		aspectRatio,
+		scriptOutput,
+		characterImages,
+	)
+	if err := e.generateShotImages(ctx, imageStyle, output.ShotImages); err != nil {
 		return ImageOutput{}, err
 	}
-	if err := writeFallbackImages(e.artifacts, output.Images); err != nil {
-		return ImageOutput{}, err
-	}
+	output.Images = buildSegmentSummaryImages(
+		scriptOutput.Segments,
+		imageStyle,
+		aspectRatio,
+		output.ShotImages,
+		characterImages,
+	)
 
 	return output, nil
 }
 
-func (e *Executor) generateLiveImages(ctx context.Context, images []GeneratedImage) error {
+func (e *Executor) generateShotImages(
+	ctx context.Context,
+	imageStyle string,
+	images []GeneratedShotImage,
+) error {
 	if e.client == nil {
+		for index := range images {
+			if err := e.writeFallbackShotImage(images[index]); err != nil {
+				return err
+			}
+			images[index].IsFallback = true
+		}
 		return nil
 	}
 
+	var lastSuccessful *generatedShotResult
 	for index := range images {
-		generated, err := e.client.Generate(ctx, Request{
-			Model:          e.generationConfig.Model,
-			Prompt:         images[index].Prompt,
-			Size:           e.generationConfig.Size,
-			NegativePrompt: e.generationConfig.NegativePrompt,
-		})
+		result, err := e.generateShotImage(ctx, imageStyle, images[index])
 		if err != nil {
-			e.log.Warn("image generation failed, writing fallback image",
+			e.log.Warn("shot image generation failed after retries",
 				"segment_index", images[index].SegmentIndex,
+				"shot_index", images[index].ShotIndex,
+				"prompt_type", images[index].PromptType,
 				"error", err,
+			)
+			if lastSuccessful != nil {
+				if err := e.artifacts.WriteBytes(images[index].FilePath, lastSuccessful.ImageData); err != nil {
+					return fmt.Errorf("write reused image file: %w", err)
+				}
+				images[index].IsFallback = false
+				images[index].FilledFromPrevious = true
+				images[index].GenerationRequestID = lastSuccessful.RequestID
+				images[index].GenerationModel = lastSuccessful.Model
+				images[index].SourceImageURL = lastSuccessful.ImageURL
+				e.log.Info("shot image filled from previous success",
+					"segment_index", images[index].SegmentIndex,
+					"shot_index", images[index].ShotIndex,
+					"prompt_type", images[index].PromptType,
+				)
+				continue
+			}
+
+			if err := e.writeFallbackShotImage(images[index]); err != nil {
+				return err
+			}
+			images[index].IsFallback = true
+			e.log.Info("shot image fell back to local placeholder",
+				"segment_index", images[index].SegmentIndex,
+				"shot_index", images[index].ShotIndex,
+				"prompt_type", images[index].PromptType,
 			)
 			continue
 		}
-		if err := e.artifacts.WriteBytes(images[index].FilePath, generated.ImageData); err != nil {
-			return fmt.Errorf("write generated image file: %w", err)
+		if err := e.artifacts.WriteBytes(images[index].FilePath, result.ImageData); err != nil {
+			return fmt.Errorf("write generated shot image file: %w", err)
 		}
 		images[index].IsFallback = false
-		images[index].GenerationRequestID = strings.TrimSpace(generated.RequestID)
-		images[index].GenerationModel = strings.TrimSpace(generated.Model)
-		images[index].SourceImageURL = strings.TrimSpace(generated.ImageURL)
+		images[index].FilledFromPrevious = false
+		images[index].GenerationRequestID = result.RequestID
+		images[index].GenerationModel = result.Model
+		images[index].SourceImageURL = result.ImageURL
+		lastSuccessful = result
+
+		e.log.Info("shot image generated",
+			"segment_index", images[index].SegmentIndex,
+			"shot_index", images[index].ShotIndex,
+			"prompt_type", images[index].PromptType,
+			"reference_count", len(result.ReferenceImages),
+		)
 	}
 
 	return nil
 }
 
 type ImageOutput struct {
-	Images []GeneratedImage `json:"images"`
+	Images     []GeneratedImage     `json:"images"`
+	ShotImages []GeneratedShotImage `json:"shot_images,omitempty"`
 }
 
 type GeneratedImage struct {
@@ -193,12 +264,31 @@ type GeneratedImage struct {
 	MatchedCharacters   []ImageCharacterReference `json:"matched_characters"`
 }
 
+type GeneratedShotImage struct {
+	SegmentIndex        int                       `json:"segment_index"`
+	ShotIndex           int                       `json:"shot_index"`
+	FilePath            string                    `json:"file_path"`
+	Width               int                       `json:"width"`
+	Height              int                       `json:"height"`
+	Prompt              string                    `json:"prompt"`
+	PromptType          string                    `json:"prompt_type"`
+	IsFallback          bool                      `json:"is_fallback"`
+	FilledFromPrevious  bool                      `json:"filled_from_previous,omitempty"`
+	GenerationRequestID string                    `json:"generation_request_id,omitempty"`
+	GenerationModel     string                    `json:"generation_model,omitempty"`
+	SourceImageURL      string                    `json:"source_image_url,omitempty"`
+	InvolvedCharacters  []string                  `json:"involved_characters,omitempty"`
+	CharacterReferences []ImageCharacterReference `json:"character_references"`
+	MatchedCharacters   []ImageCharacterReference `json:"matched_characters"`
+}
+
 type ImageCharacterReference struct {
 	CharacterIndex int      `json:"character_index"`
 	CharacterName  string   `json:"character_name"`
 	FilePath       string   `json:"file_path"`
 	Prompt         string   `json:"prompt"`
 	MatchTerms     []string `json:"match_terms"`
+	SourceImageURL string   `json:"source_image_url,omitempty"`
 }
 
 type scriptArtifactOutput struct {
@@ -217,40 +307,45 @@ type scriptArtifactShot struct {
 	InvolvedCharacters []string `json:"involved_characters,omitempty"`
 	ImagePrompt        string   `json:"image_to_image_prompt,omitempty"`
 	TextPrompt         string   `json:"text_to_image_prompt,omitempty"`
-	Prompt             string   `json:"prompt,omitempty"`
 }
 
 func buildImageOutput(
 	jobPublicID string,
 	imageStyle string,
+	aspectRatio model.AspectRatio,
 	scriptOutput scriptArtifactOutput,
 	characterImages CharacterImageOutput,
 ) ImageOutput {
-	output := ImageOutput{Images: make([]GeneratedImage, 0, len(scriptOutput.Segments))}
+	output := ImageOutput{
+		Images:     make([]GeneratedImage, 0, len(scriptOutput.Segments)),
+		ShotImages: make([]GeneratedShotImage, 0, countShotImages(scriptOutput.Segments)),
+	}
 	references := buildImageCharacterReferences(characterImages)
 	for _, segment := range scriptOutput.Segments {
-		matched := matchSegmentCharacters(segment, references)
-		source := resolveSegmentPromptSource(segment, matched)
-		selected, matchedSelected := selectPromptCharacters(references, matched)
-		output.Images = append(output.Images, GeneratedImage{
-			SegmentIndex:        segment.Index,
-			FilePath:            fmt.Sprintf("jobs/%s/images/segment_%03d.jpg", jobPublicID, segment.Index),
-			Width:               defaultImageWidth,
-			Height:              defaultImageHeight,
-			IsFallback:          true,
-			Prompt:              buildSegmentImagePrompt(source.Text, imageStyle, selected, matchedSelected),
-			PromptSourceType:    source.Type,
-			PromptSourceText:    source.Text,
-			PromptSourceShots:   source.Shots,
-			CharacterReferences: references,
-			MatchedCharacters:   matched,
-		})
+		output.ShotImages = append(
+			output.ShotImages,
+			buildShotImages(jobPublicID, imageStyle, aspectRatio, segment, references)...,
+		)
 	}
 
 	return output
 }
 
-func countGeneratedImages(images []GeneratedImage) int {
+func countShotImages(segments []scriptArtifactSegment) int {
+	total := 0
+	for _, segment := range segments {
+		for _, shot := range segment.Shots {
+			if effectiveShotPrompt(shot) == "" {
+				continue
+			}
+			total++
+		}
+	}
+
+	return total
+}
+
+func countGeneratedShotImages(images []GeneratedShotImage) int {
 	count := 0
 	for _, image := range images {
 		if image.IsFallback {
@@ -262,7 +357,7 @@ func countGeneratedImages(images []GeneratedImage) int {
 	return count
 }
 
-func countFallbackImages(images []GeneratedImage) int {
+func countFallbackShotImages(images []GeneratedShotImage) int {
 	count := 0
 	for _, image := range images {
 		if !image.IsFallback {
@@ -285,15 +380,143 @@ func buildImageCharacterReferences(
 			FilePath:       item.FilePath,
 			Prompt:         item.Prompt,
 			MatchTerms:     item.MatchTerms,
+			SourceImageURL: item.SourceImageURL,
 		})
 	}
 
 	return references
 }
 
+func buildShotImages(
+	jobPublicID string,
+	imageStyle string,
+	aspectRatio model.AspectRatio,
+	segment scriptArtifactSegment,
+	references []ImageCharacterReference,
+) []GeneratedShotImage {
+	images := make([]GeneratedShotImage, 0, len(segment.Shots))
+	width, height := aspectRatio.Dimensions(defaultImageMaxEdge)
+	for _, shot := range segment.Shots {
+		prompt := buildShotImagePrompt(shot, imageStyle, aspectRatio)
+		if prompt == "" {
+			continue
+		}
+
+		images = append(images, GeneratedShotImage{
+			SegmentIndex:        segment.Index,
+			ShotIndex:           shot.Index,
+			FilePath:            fmt.Sprintf("jobs/%s/images/segment_%03d_shot_%03d.jpg", jobPublicID, segment.Index, shot.Index),
+			Width:               width,
+			Height:              height,
+			Prompt:              prompt,
+			PromptType:          shotPromptType(shot),
+			IsFallback:          true,
+			InvolvedCharacters:  cloneStringSlice(shot.InvolvedCharacters),
+			CharacterReferences: references,
+			MatchedCharacters:   matchShotCharacters(shot, references),
+		})
+	}
+
+	return images
+}
+
+func buildShotImagePrompt(
+	shot scriptArtifactShot,
+	imageStyle string,
+	aspectRatio model.AspectRatio,
+) string {
+	base := strings.TrimSpace(effectiveShotPrompt(shot))
+	if base == "" {
+		return ""
+	}
+
+	parts := []string{
+		base,
+		"style: " + strings.TrimSpace(imageStyle),
+		aspectRatioPromptSuffix(aspectRatio),
+		"no face close-up",
+	}
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		filtered = append(filtered, strings.TrimSpace(part))
+	}
+
+	return strings.Join(filtered, "; ")
+}
+
+func buildSegmentSummaryImages(
+	segments []scriptArtifactSegment,
+	imageStyle string,
+	aspectRatio model.AspectRatio,
+	shotImages []GeneratedShotImage,
+	characterImages CharacterImageOutput,
+) []GeneratedImage {
+	references := buildImageCharacterReferences(characterImages)
+	bySegment := groupShotImagesBySegment(shotImages)
+	summaries := make([]GeneratedImage, 0, len(segments))
+	for _, segment := range segments {
+		shots := bySegment[segment.Index]
+		if len(shots) == 0 {
+			continue
+		}
+
+		matched := matchSegmentCharacters(segment, references)
+		source := resolveSegmentPromptSource(segment, matched)
+		selected, matchedSelected := selectPromptCharacters(references, matched)
+		summaryShot := chooseSummaryShot(shots)
+		summaries = append(summaries, GeneratedImage{
+			SegmentIndex: segment.Index,
+			FilePath:     summaryShot.FilePath,
+			Width:        summaryShot.Width,
+			Height:       summaryShot.Height,
+			IsFallback:   summaryShot.IsFallback,
+			Prompt: buildSegmentImagePrompt(
+				source.Text,
+				imageStyle,
+				aspectRatio,
+				selected,
+				matchedSelected,
+			),
+			PromptSourceType:    source.Type,
+			PromptSourceText:    source.Text,
+			PromptSourceShots:   source.Shots,
+			GenerationRequestID: summaryShot.GenerationRequestID,
+			GenerationModel:     summaryShot.GenerationModel,
+			SourceImageURL:      summaryShot.SourceImageURL,
+			CharacterReferences: references,
+			MatchedCharacters:   matched,
+		})
+	}
+
+	return summaries
+}
+
+func groupShotImagesBySegment(images []GeneratedShotImage) map[int][]GeneratedShotImage {
+	grouped := make(map[int][]GeneratedShotImage, len(images))
+	for _, image := range images {
+		grouped[image.SegmentIndex] = append(grouped[image.SegmentIndex], image)
+	}
+
+	return grouped
+}
+
+func chooseSummaryShot(images []GeneratedShotImage) GeneratedShotImage {
+	for _, image := range images {
+		if !image.IsFallback {
+			return image
+		}
+	}
+
+	return images[0]
+}
+
 func buildSegmentImagePrompt(
 	base string,
 	imageStyle string,
+	aspectRatio model.AspectRatio,
 	selected []ImageCharacterReference,
 	matchedSelected bool,
 ) string {
@@ -307,7 +530,7 @@ func buildSegmentImagePrompt(
 		parts = append(parts, "character reference details: "+joinReferencePrompts(selected))
 	}
 	parts = append(parts, "style: "+strings.TrimSpace(imageStyle))
-	parts = append(parts, "cinematic composition, high quality, 16:9")
+	parts = append(parts, aspectRatioPromptSuffix(aspectRatio))
 	parts = append(parts, "no face close-up")
 
 	filtered := make([]string, 0, len(parts))
@@ -332,11 +555,206 @@ func selectPromptCharacters(
 	return references, false
 }
 
+type generatedShotResult struct {
+	RequestID       string
+	Model           string
+	ImageURL        string
+	ImageData       []byte
+	ReferenceImages []string
+}
+
+func (e *Executor) generateShotImage(
+	ctx context.Context,
+	imageStyle string,
+	image GeneratedShotImage,
+) (*generatedShotResult, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("live image client is not configured")
+	}
+
+	request, referenceImages, err := e.buildShotGenerationRequest(imageStyle, image)
+	if err != nil {
+		return nil, err
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxImageGenerateAttempts; attempt++ {
+		generated, err := e.client.Generate(ctx, request)
+		if err == nil {
+			return &generatedShotResult{
+				RequestID:       strings.TrimSpace(generated.RequestID),
+				Model:           strings.TrimSpace(generated.Model),
+				ImageURL:        strings.TrimSpace(generated.ImageURL),
+				ImageData:       generated.ImageData,
+				ReferenceImages: referenceImages,
+			}, nil
+		}
+		lastErr = err
+		e.log.Warn("shot image attempt failed",
+			"segment_index", image.SegmentIndex,
+			"shot_index", image.ShotIndex,
+			"attempt", attempt,
+			"prompt_type", image.PromptType,
+			"error", err,
+		)
+	}
+
+	return nil, lastErr
+}
+
+func (e *Executor) buildShotGenerationRequest(
+	imageStyle string,
+	image GeneratedShotImage,
+) (Request, []string, error) {
+	request := Request{
+		Model:          e.generationConfig.Model,
+		Prompt:         image.Prompt,
+		Size:           formatGeneratedImageSize(image.Width, image.Height),
+		NegativePrompt: e.generationConfig.NegativePrompt,
+	}
+	if image.PromptType != "image_to_image" {
+		return request, nil, nil
+	}
+
+	selected := selectShotReferenceCandidates(image)
+	if len(selected) == 0 {
+		return request, nil, nil
+	}
+
+	if len(selected) > maxReferenceImages {
+		selected = selected[:maxReferenceImages]
+	}
+	referenceImages, err := e.resolveReferenceImages(selected)
+	if err != nil {
+		return Request{}, nil, err
+	}
+	request.ReferenceImages = referenceImages
+	request.Prompt = replacePromptCharacterNamesWithPlaceholders(image.Prompt, selected)
+	request.Prompt = ensurePromptStyle(request.Prompt, imageStyle)
+
+	return request, referenceImages, nil
+}
+
+func selectShotReferenceCandidates(image GeneratedShotImage) []ImageCharacterReference {
+	if len(image.MatchedCharacters) > 0 {
+		return image.MatchedCharacters
+	}
+
+	return image.CharacterReferences
+}
+
+func (e *Executor) resolveReferenceImages(references []ImageCharacterReference) ([]string, error) {
+	resolved := make([]string, 0, len(references))
+	for _, reference := range references {
+		if sourceURL := strings.TrimSpace(reference.SourceImageURL); sourceURL != "" {
+			resolved = append(resolved, sourceURL)
+			continue
+		}
+
+		dataURL, err := e.referenceFileAsDataURL(reference.FilePath)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, dataURL)
+	}
+
+	return resolved, nil
+}
+
+func (e *Executor) referenceFileAsDataURL(relativePath string) (string, error) {
+	fullPath := artifactFullPath(e.artifacts.workspaceDir, relativePath)
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("read reference image file: %w", err)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("reference image file is empty")
+	}
+
+	return "data:" + mimeTypeForImagePath(relativePath) + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+func mimeTypeForImagePath(path string) string {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "image/jpeg"
+	}
+}
+
+func replacePromptCharacterNamesWithPlaceholders(
+	prompt string,
+	references []ImageCharacterReference,
+) string {
+	replaced := strings.TrimSpace(prompt)
+	for index, reference := range references {
+		placeholder := fmt.Sprintf("图%d中的人物", index+1)
+		terms := reference.MatchTerms
+		if len(terms) == 0 {
+			terms = []string{reference.CharacterName}
+		}
+		sort.SliceStable(terms, func(i, j int) bool {
+			return len(terms[i]) > len(terms[j])
+		})
+		for _, term := range terms {
+			trimmed := strings.TrimSpace(term)
+			if trimmed == "" {
+				continue
+			}
+			replaced = strings.ReplaceAll(replaced, trimmed, placeholder)
+		}
+	}
+
+	return replaced
+}
+
+func ensurePromptStyle(prompt string, imageStyle string) string {
+	if strings.TrimSpace(imageStyle) == "" {
+		return strings.TrimSpace(prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "style:") {
+		return strings.TrimSpace(prompt)
+	}
+
+	return strings.TrimSpace(prompt + "; style: " + strings.TrimSpace(imageStyle))
+}
+
+func (e *Executor) writeFallbackShotImage(image GeneratedShotImage) error {
+	data, err := buildFallbackJPEG(image.Width, image.Height)
+	if err != nil {
+		return fmt.Errorf("build fallback jpeg: %w", err)
+	}
+	if err := e.artifacts.WriteBytes(image.FilePath, data); err != nil {
+		return fmt.Errorf("write fallback image: %w", err)
+	}
+
+	return nil
+}
+
 func matchSegmentCharacters(
 	segment scriptArtifactSegment,
 	references []ImageCharacterReference,
 ) []ImageCharacterReference {
 	searchText := strings.ToLower(joinShotMatchText(segment.Shots))
+	matched := make([]ImageCharacterReference, 0, len(references))
+	for _, item := range references {
+		if !referenceMatched(searchText, item) {
+			continue
+		}
+		matched = append(matched, item)
+	}
+
+	return matched
+}
+
+func matchShotCharacters(
+	shot scriptArtifactShot,
+	references []ImageCharacterReference,
+) []ImageCharacterReference {
+	searchText := strings.ToLower(joinShotMatchText([]scriptArtifactShot{shot}))
 	matched := make([]ImageCharacterReference, 0, len(references))
 	for _, item := range references {
 		if !referenceMatched(searchText, item) {
@@ -500,10 +918,6 @@ func coverageShotIndexes(total int) []int {
 	return []int{0, total / 2, total - 1}
 }
 
-func joinShotPrompts(shots []scriptArtifactShot) string {
-	return strings.Join(collectShotPrompts(shots), " | ")
-}
-
 func joinShotMatchText(shots []scriptArtifactShot) string {
 	parts := make([]string, 0, len(shots)*2)
 	for _, shot := range shots {
@@ -532,11 +946,42 @@ func collectShotPrompts(shots []scriptArtifactShot) []string {
 }
 
 func effectiveShotPrompt(shot scriptArtifactShot) string {
-	return firstNonEmpty(
-		strings.TrimSpace(shot.ImagePrompt),
-		strings.TrimSpace(shot.TextPrompt),
-		strings.TrimSpace(shot.Prompt),
-	)
+	if prompt := strings.TrimSpace(shot.ImagePrompt); prompt != "" {
+		return prompt
+	}
+
+	return strings.TrimSpace(shot.TextPrompt)
+}
+
+func shotPromptType(shot scriptArtifactShot) string {
+	if strings.TrimSpace(shot.ImagePrompt) != "" {
+		return "image_to_image"
+	}
+	if strings.TrimSpace(shot.TextPrompt) != "" {
+		return "text_to_image"
+	}
+
+	return ""
+}
+
+func cloneStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		cloned = append(cloned, trimmed)
+	}
+	if len(cloned) == 0 {
+		return nil
+	}
+
+	return cloned
 }
 
 func buildMatchTermSet(references []ImageCharacterReference) []string {
@@ -567,14 +1012,46 @@ func textMatchesTerms(text string, terms []string) bool {
 	return false
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
+func resolveImageAspectRatio(payload map[string]any) model.AspectRatio {
+	return resolveAspectRatio(payload, model.AspectRatioLandscape16x9)
+}
+
+func resolveAspectRatio(
+	payload map[string]any,
+	fallback model.AspectRatio,
+) model.AspectRatio {
+	if payload == nil {
+		return fallback
 	}
 
-	return ""
+	value, ok := payload["aspect_ratio"]
+	if !ok {
+		return fallback
+	}
+
+	s, ok := value.(string)
+	if !ok {
+		return fallback
+	}
+
+	aspectRatio := model.ParseAspectRatio(s)
+	if !aspectRatio.IsValid() {
+		return fallback
+	}
+
+	return aspectRatio.Normalized()
+}
+
+func aspectRatioPromptSuffix(aspectRatio model.AspectRatio) string {
+	return "cinematic composition, high quality, " + string(aspectRatio.Normalized())
+}
+
+func formatGeneratedImageSize(width int, height int) string {
+	if width <= 0 || height <= 0 {
+		return defaultImageSize
+	}
+
+	return fmt.Sprintf("%d*%d", width, height)
 }
 
 func payloadString(payload map[string]any, key string) (string, error) {

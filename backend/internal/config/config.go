@@ -10,24 +10,41 @@ import (
 )
 
 type Config struct {
-	Port                           string
-	DatabaseDriver                 string
-	DatabaseDSN                    string
-	ScriptTimeoutPerSegmentSeconds int
-	EnableLiveTextGeneration       bool
-	EnableLiveImageGeneration      bool
-	DashScopeTextBaseURL           string
-	DashScopeTextModel             string
-	DashScopeTextAPIKey            string
-	DashScopeImageBaseURL          string
-	DashScopeImageModel            string
-	DashScopeImageAPIKey           string
-	DashScopeVideoBaseURL          string
-	DashScopeVideoModel            string
-	DashScopeVideoAPIKey           string
-	TTSBaseURL                     string
-	TTSAPIKey                      string
-	WorkspaceDir                   string
+	Port                               string
+	DatabaseDriver                     string
+	DatabaseDSN                        string
+	ScriptTimeoutPerSegmentSeconds     int
+	VideoRenderTimeoutSeconds          int
+	ShotVideoTimeoutPerShotSeconds     int
+	FFmpegStartupCheckTimeoutSeconds   int
+	ShotVideoDefaultDurationSeconds    int
+	EnableLiveTextGeneration           bool
+	EnableLiveImageGeneration          bool
+	EnableLiveVideoGeneration          bool
+	DashScopeTextBaseURL               string
+	DashScopeTextModel                 string
+	DashScopeTextAPIKey                string
+	DashScopeImageBaseURL              string
+	DashScopeImageModel                string
+	DashScopeImageAPIKey               string
+	DashScopeVideoBaseURL              string
+	DashScopeVideoModel                string
+	DashScopeVideoAPIKey               string
+	DashScopeVideoSubmitTimeoutSeconds int
+	DashScopeVideoPollIntervalSeconds  int
+	DashScopeVideoMaxWaitSeconds       int
+	DashScopeVideoMaxRequestBytes      int
+	DashScopeVideoResolution           string
+	DashScopeVideoNegativePrompt       string
+	DashScopeVideoImageJPEGQuality     int
+	DashScopeVideoImageMinJPEGQuality  int
+	TTSBaseURL                         string
+	TTSRequestTimeoutSeconds           int
+	TTSJWTPrivateKey                   string
+	TTSJWTExpireSeconds                int
+	TTSDefaultVoiceID                  string
+	TTSEmotionPrompt                   string
+	WorkspaceDir                       string
 }
 
 func Load() (*Config, error) {
@@ -53,24 +70,41 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:                           envOrDefault("PORT", "8080"),
-		DatabaseDriver:                 databaseDriver,
-		DatabaseDSN:                    databaseDSN,
-		ScriptTimeoutPerSegmentSeconds: envAsIntOrDefault("SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS", 200),
-		EnableLiveTextGeneration:       envAsBool("ENABLE_LIVE_TEXT_GENERATION"),
-		EnableLiveImageGeneration:      envAsBool("ENABLE_LIVE_IMAGE_GENERATION"),
-		DashScopeTextBaseURL:           envOrDefault("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
-		DashScopeTextModel:             envOrDefault("DASHSCOPE_TEXT_MODEL", "qwen-max"),
-		DashScopeTextAPIKey:            env("DASHSCOPE_TEXT_API_KEY"),
-		DashScopeImageBaseURL:          envOrDefault("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
-		DashScopeImageModel:            envOrDefault("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0"),
-		DashScopeImageAPIKey:           env("DASHSCOPE_IMAGE_API_KEY"),
-		DashScopeVideoBaseURL:          envOrDefault("DASHSCOPE_VIDEO_BASE_URL", "https://dashscope.aliyuncs.com"),
-		DashScopeVideoModel:            envOrDefault("DASHSCOPE_VIDEO_MODEL", "wan2.6-i2v-flash"),
-		DashScopeVideoAPIKey:           env("DASHSCOPE_VIDEO_API_KEY"),
-		TTSBaseURL:                     env("TTS_API_BASE_URL"),
-		TTSAPIKey:                      env("TTS_API_KEY"),
-		WorkspaceDir:                   workspaceDir,
+		Port:                               envOrDefault("PORT", "8080"),
+		DatabaseDriver:                     databaseDriver,
+		DatabaseDSN:                        databaseDSN,
+		ScriptTimeoutPerSegmentSeconds:     envAsIntOrDefault("SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS", 200),
+		VideoRenderTimeoutSeconds:          envAsIntOrDefault("VIDEO_RENDER_TIMEOUT_SECONDS", 1800),
+		ShotVideoTimeoutPerShotSeconds:     envAsIntOrDefault("SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS", 200),
+		FFmpegStartupCheckTimeoutSeconds:   envAsIntOrDefault("FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS", 10),
+		ShotVideoDefaultDurationSeconds:    envAsIntOrDefault("SHOT_VIDEO_DEFAULT_DURATION_SECONDS", 3),
+		EnableLiveTextGeneration:           envAsBool("ENABLE_LIVE_TEXT_GENERATION"),
+		EnableLiveImageGeneration:          envAsBool("ENABLE_LIVE_IMAGE_GENERATION"),
+		EnableLiveVideoGeneration:          envAsBool("ENABLE_LIVE_VIDEO_GENERATION"),
+		DashScopeTextBaseURL:               envOrDefault("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+		DashScopeTextModel:                 envOrDefault("DASHSCOPE_TEXT_MODEL", "qwen-max"),
+		DashScopeTextAPIKey:                env("DASHSCOPE_TEXT_API_KEY"),
+		DashScopeImageBaseURL:              envOrDefault("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
+		DashScopeImageModel:                envOrDefault("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0"),
+		DashScopeImageAPIKey:               env("DASHSCOPE_IMAGE_API_KEY"),
+		DashScopeVideoBaseURL:              envOrDefault("DASHSCOPE_VIDEO_BASE_URL", "https://dashscope.aliyuncs.com"),
+		DashScopeVideoModel:                envOrDefault("DASHSCOPE_VIDEO_MODEL", "wan2.6-i2v-flash"),
+		DashScopeVideoAPIKey:               env("DASHSCOPE_VIDEO_API_KEY"),
+		DashScopeVideoSubmitTimeoutSeconds: envAsIntOrDefault("DASHSCOPE_VIDEO_SUBMIT_TIMEOUT_SECONDS", 60),
+		DashScopeVideoPollIntervalSeconds:  envAsIntOrDefault("DASHSCOPE_VIDEO_POLL_INTERVAL_SECONDS", 10),
+		DashScopeVideoMaxWaitSeconds:       envAsIntOrDefault("DASHSCOPE_VIDEO_MAX_WAIT_SECONDS", 900),
+		DashScopeVideoMaxRequestBytes:      envAsIntOrDefault("DASHSCOPE_VIDEO_MAX_REQUEST_BYTES", 6291456),
+		DashScopeVideoResolution:           envOrDefault("DASHSCOPE_VIDEO_RESOLUTION", "720P"),
+		DashScopeVideoNegativePrompt:       env("DASHSCOPE_VIDEO_NEGATIVE_PROMPT"),
+		DashScopeVideoImageJPEGQuality:     envAsIntOrDefault("DASHSCOPE_VIDEO_IMAGE_JPEG_QUALITY", 80),
+		DashScopeVideoImageMinJPEGQuality:  envAsIntOrDefault("DASHSCOPE_VIDEO_IMAGE_MIN_JPEG_QUALITY", 45),
+		TTSBaseURL:                         env("TTS_API_BASE_URL"),
+		TTSRequestTimeoutSeconds:           envAsIntOrDefault("TTS_REQUEST_TIMEOUT_SECONDS", 300),
+		TTSJWTPrivateKey:                   env("TTS_JWT_PRIVATE_KEY"),
+		TTSJWTExpireSeconds:                envAsIntOrDefault("TTS_JWT_EXPIRE_SECONDS", 300),
+		TTSDefaultVoiceID:                  envOrDefault("TTS_DEFAULT_VOICE_ID", "male_calm"),
+		TTSEmotionPrompt:                   envOrDefault("TTS_EMOTION_PROMPT", "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/male-read-emo.wav"),
+		WorkspaceDir:                       workspaceDir,
 	}
 
 	return cfg, nil

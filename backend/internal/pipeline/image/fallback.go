@@ -36,7 +36,10 @@ func writeFallbackCharacterImages(
 		if !item.IsFallback {
 			continue
 		}
-		data, err := buildFallbackJPEG(defaultImageWidth, defaultImageHeight)
+		data, err := buildFallbackJPEG(
+			characterReferenceImageWidth,
+			characterReferenceImageHeight,
+		)
 		if err != nil {
 			return fmt.Errorf("build fallback jpeg: %w", err)
 		}

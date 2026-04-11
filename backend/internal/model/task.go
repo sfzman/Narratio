@@ -12,6 +12,7 @@ const (
 	TaskTypeCharacterImage TaskType = "character_image"
 	TaskTypeTTS            TaskType = "tts"
 	TaskTypeImage          TaskType = "image"
+	TaskTypeShotVideo      TaskType = "shot_video"
 	TaskTypeVideo          TaskType = "video"
 )
 
@@ -34,6 +35,7 @@ const (
 	ResourceLLMText     ResourceKey = "llm_text"
 	ResourceTTS         ResourceKey = "tts"
 	ResourceImageGen    ResourceKey = "image_gen"
+	ResourceVideoGen    ResourceKey = "video_gen"
 	ResourceVideoRender ResourceKey = "video_render"
 )
 

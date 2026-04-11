@@ -43,10 +43,11 @@ func TestHTTPClientGenerate(t *testing.T) {
 	}
 
 	response, err := client.Generate(context.Background(), Request{
-		Model:          "qwen-image-2.0",
-		Prompt:         "night rain on the bridge",
-		Size:           "1280*720",
-		NegativePrompt: "人物面部特写, 模糊, 低质量",
+		Model:           "qwen-image-2.0",
+		Prompt:          "night rain on the bridge",
+		ReferenceImages: []string{"https://example.com/reference-1.jpg"},
+		Size:            "1280*720",
+		NegativePrompt:  "人物面部特写, 模糊, 低质量",
 	})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -68,8 +69,31 @@ func TestHTTPClientGenerate(t *testing.T) {
 	if !ok {
 		t.Fatalf("input = %#v, want object", requestBody["input"])
 	}
-	if _, ok := input["messages"].([]any); !ok {
+	messages, ok := input["messages"].([]any)
+	if !ok {
 		t.Fatalf("input.messages = %#v, want array", input["messages"])
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(input.messages) = %d, want 1", len(messages))
+	}
+	firstMessage, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first message = %#v, want object", messages[0])
+	}
+	content, ok := firstMessage["content"].([]any)
+	if !ok {
+		t.Fatalf("content = %#v, want array", firstMessage["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("len(content) = %d, want 2", len(content))
+	}
+	firstContent, ok := content[0].(map[string]any)
+	if !ok || firstContent["image"] != "https://example.com/reference-1.jpg" {
+		t.Fatalf("first content = %#v, want image reference", content[0])
+	}
+	secondContent, ok := content[1].(map[string]any)
+	if !ok || secondContent["text"] != "night rain on the bridge" {
+		t.Fatalf("second content = %#v, want text prompt", content[1])
 	}
 	parameters, ok := requestBody["parameters"].(map[string]any)
 	if !ok {

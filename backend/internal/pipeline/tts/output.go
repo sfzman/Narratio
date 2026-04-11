@@ -35,7 +35,7 @@ type SubtitleItem struct {
 	Text         string  `json:"text"`
 }
 
-func buildTTSOutput(jobPublicID string, segmentation segmentationArtifact) TTSOutput {
+func buildPlaceholderTTSOutput(jobPublicID string, segmentation segmentationArtifact) TTSOutput {
 	segments := segmentation.Segments
 	if len(segments) == 0 {
 		segments = []segmentationSegment{{Index: 0, Text: ""}}
@@ -52,7 +52,7 @@ func buildTTSOutput(jobPublicID string, segmentation segmentationArtifact) TTSOu
 
 		audioSegments = append(audioSegments, AudioSegment{
 			SegmentIndex: segmentIndex,
-			FilePath:     fmt.Sprintf("jobs/%s/audio/segment_%03d.wav", jobPublicID, segmentIndex),
+			FilePath:     audioSegmentPath(jobPublicID, segmentIndex),
 			Duration:     defaultSegmentDuration,
 		})
 		subtitleItems = append(subtitleItems, SubtitleItem{
@@ -69,6 +69,18 @@ func buildTTSOutput(jobPublicID string, segmentation segmentationArtifact) TTSOu
 		TotalDuration: currentStart,
 		SubtitleItems: subtitleItems,
 	}
+}
+
+func audioSegmentPath(jobPublicID string, segmentIndex int) string {
+	return fmt.Sprintf("jobs/%s/audio/segment_%03d.wav", jobPublicID, segmentIndex)
+}
+
+func normalizedSegmentIndex(raw int, fallback int) int {
+	if raw >= 0 {
+		return raw
+	}
+
+	return fallback
 }
 
 func collectAudioSegmentPaths(segments []AudioSegment) []string {
@@ -109,4 +121,41 @@ func formatSRTTimestamp(seconds float64) string {
 	milliseconds := totalMilliseconds % 1000
 
 	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, secondsPart, milliseconds)
+}
+
+func splitSentencesByPeriod(text string) []string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+
+	sentences := make([]string, 0, 8)
+	var builder strings.Builder
+	for _, char := range trimmed {
+		switch char {
+		case '\r', '\n':
+			sentence := strings.TrimSpace(builder.String())
+			if sentence != "" {
+				sentences = append(sentences, sentence)
+			}
+			builder.Reset()
+			continue
+		}
+
+		builder.WriteRune(char)
+		if char == '。' || char == '.' {
+			sentence := strings.TrimSpace(builder.String())
+			if sentence != "" {
+				sentences = append(sentences, sentence)
+			}
+			builder.Reset()
+		}
+	}
+
+	remainder := strings.TrimSpace(builder.String())
+	if remainder != "" {
+		sentences = append(sentences, remainder)
+	}
+
+	return sentences
 }

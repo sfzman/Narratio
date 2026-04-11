@@ -11,6 +11,11 @@ import (
 	"github.com/sfzman/Narratio/backend/internal/model"
 )
 
+const (
+	characterReferenceImageWidth  = 832
+	characterReferenceImageHeight = 1248
+)
+
 type CharacterImageExecutor struct {
 	log              *slog.Logger
 	client           Client
@@ -167,7 +172,7 @@ func buildCharacterImagePrompt(character characterProfileArtifact) string {
 		strings.TrimSpace(character.Appearance),
 		strings.TrimSpace(character.VisualSignature),
 		strings.TrimSpace(character.ImagePromptFocus),
-		"人物设定参考图，单人，构图稳定，无文字，无水印",
+		"人物设定参考图，单人，正面，全身，居中站姿，完整露出头发、服装与鞋子，构图稳定，纯净背景，无文字，无水印",
 	}
 
 	filtered := make([]string, 0, len(parts))
@@ -193,7 +198,7 @@ func (e *CharacterImageExecutor) generateLiveCharacterImages(
 		generated, err := e.client.Generate(ctx, Request{
 			Model:          e.generationConfig.Model,
 			Prompt:         images[index].Prompt,
-			Size:           e.generationConfig.Size,
+			Size:           characterReferenceImageSize(),
 			NegativePrompt: e.generationConfig.NegativePrompt,
 		})
 		if err != nil {
@@ -214,6 +219,10 @@ func (e *CharacterImageExecutor) generateLiveCharacterImages(
 	}
 
 	return nil
+}
+
+func characterReferenceImageSize() string {
+	return fmt.Sprintf("%d*%d", characterReferenceImageWidth, characterReferenceImageHeight)
 }
 
 func buildCharacterMatchTerms(name string) []string {

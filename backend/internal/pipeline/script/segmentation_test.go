@@ -56,3 +56,52 @@ func TestSegmentationExecutorExecute(t *testing.T) {
 		t.Fatalf("segments[0].char_count = %d, want 9", artifact.Segments[0].CharCount)
 	}
 }
+
+func TestSegmentArticleMergesShortTailIntoPreviousSegment(t *testing.T) {
+	t.Parallel()
+
+	segments := segmentArticle("甲乙丙丁。戊己庚辛。壬癸子丑。尾。", 10)
+	if len(segments) != 1 {
+		t.Fatalf("len(segments) = %d, want 1", len(segments))
+	}
+	if segments[0] != "甲乙丙丁。戊己庚辛。壬癸子丑。尾。" {
+		t.Fatalf("segments[0] = %q", segments[0])
+	}
+}
+
+func TestTargetShotCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		segment TextSegment
+		want    int
+	}{
+		{
+			name:    "short segment keeps minimum shots",
+			segment: TextSegment{Text: "很短的一段。", CharCount: 5},
+			want:    minShotsPerSegment,
+		},
+		{
+			name:    "medium segment scales with char count",
+			segment: TextSegment{Text: "这一段的内容长度适中。", CharCount: 120},
+			want:    4,
+		},
+		{
+			name:    "long segment caps at max shots",
+			segment: TextSegment{Text: "长段落", CharCount: 400},
+			want:    defaultShotsPerSegment,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := targetShotCount(tc.segment); got != tc.want {
+				t.Fatalf("targetShotCount() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

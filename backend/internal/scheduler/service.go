@@ -29,6 +29,8 @@ type Service struct {
 	resources               ResourceManager
 	clock                   Clock
 	scriptTimeoutPerSegment time.Duration
+	shotVideoTimeoutPerShot time.Duration
+	videoRenderTimeout      time.Duration
 	log                     *slog.Logger
 }
 
@@ -45,6 +47,8 @@ func NewService(
 		resources:               resources,
 		clock:                   realClock{},
 		scriptTimeoutPerSegment: defaultScriptSegmentExecutionTimeout,
+		shotVideoTimeoutPerShot: defaultShotVideoExecutionTimeoutPerShot,
+		videoRenderTimeout:      defaultVideoRenderExecutionTimeout,
 		log:                     slog.Default(),
 	}
 }
@@ -54,6 +58,20 @@ func (s *Service) SetScriptTimeoutPerSegment(timeout time.Duration) {
 		return
 	}
 	s.scriptTimeoutPerSegment = timeout
+}
+
+func (s *Service) SetVideoRenderTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	s.videoRenderTimeout = timeout
+}
+
+func (s *Service) SetShotVideoTimeoutPerShot(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	s.shotVideoTimeoutPerShot = timeout
 }
 
 func (s *Service) DispatchOnce(
@@ -80,6 +98,8 @@ func (s *Service) DispatchOnce(
 		s.registry,
 		s.resources,
 		s.scriptTimeoutPerSegment,
+		s.shotVideoTimeoutPerShot,
+		s.videoRenderTimeout,
 	)
 	if err != nil {
 		s.log.Error("dispatch next ready task failed",

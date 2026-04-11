@@ -23,7 +23,7 @@ func TestPromoteReadyTasks(t *testing.T) {
 		{
 			Key:       "video",
 			Status:    model.TaskStatusPending,
-			DependsOn: []string{"tts", "image"},
+			DependsOn: []string{"tts", "shot_video"},
 		},
 	}
 
@@ -101,6 +101,15 @@ func TestAggregateJobState(t *testing.T) {
 			},
 			wantStatus:   model.JobStatusCancelled,
 			wantProgress: 0,
+		},
+		{
+			name: "cancelled when succeeded and cancelled tasks remain after cancellation flow",
+			tasks: []model.Task{
+				{Status: model.TaskStatusSucceeded},
+				{Status: model.TaskStatusCancelled},
+			},
+			wantStatus:   model.JobStatusCancelled,
+			wantProgress: 50,
 		},
 	}
 
@@ -257,6 +266,59 @@ func TestDispatchNextReadyTaskMarksFailure(t *testing.T) {
 	}
 	if result.Tasks[0].Error == nil || result.Tasks[0].Error.Code != "task_execution_failed" {
 		t.Fatalf("image error = %#v, want task_execution_failed", result.Tasks[0].Error)
+	}
+}
+
+func TestDispatchNextReadyTaskMarksCancellation(t *testing.T) {
+	t.Parallel()
+
+	job := model.Job{ID: 3, PublicID: "job_3"}
+	tasks := []model.Task{
+		{
+			ID:          30,
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusReady,
+			ResourceKey: model.ResourceLLMText,
+		},
+		{
+			ID:          31,
+			Key:         "image",
+			Type:        model.TaskTypeImage,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceImageGen,
+		},
+	}
+
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeScript: executorFunc(func(
+			ctx context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			<-ctx.Done()
+			return task, ctx.Err()
+		}),
+	})
+
+	manager := NewMemoryResourceManager(map[model.ResourceKey]int{
+		model.ResourceLLMText: 1,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := DispatchNextReadyTask(ctx, job, tasks, registry, manager)
+	if err != nil {
+		t.Fatalf("DispatchNextReadyTask() error = %v", err)
+	}
+
+	if result.Tasks[0].Status != model.TaskStatusCancelled {
+		t.Fatalf("script status = %q, want %q", result.Tasks[0].Status, model.TaskStatusCancelled)
+	}
+	if result.Tasks[1].Status != model.TaskStatusCancelled {
+		t.Fatalf("image status = %q, want %q", result.Tasks[1].Status, model.TaskStatusCancelled)
 	}
 }
 

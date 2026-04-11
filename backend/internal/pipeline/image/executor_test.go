@@ -12,13 +12,27 @@ import (
 )
 
 type fakeClient struct {
-	requests []Request
-	response Response
-	err      error
+	requests  []Request
+	response  Response
+	responses []Response
+	err       error
+	errs      []error
 }
 
 func (f *fakeClient) Generate(_ context.Context, request Request) (Response, error) {
 	f.requests = append(f.requests, request)
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		if err != nil {
+			return Response{}, err
+		}
+	}
+	if len(f.responses) > 0 {
+		response := f.responses[0]
+		f.responses = f.responses[1:]
+		return response, nil
+	}
 	if f.err != nil {
 		return Response{}, f.err
 	}
@@ -114,16 +128,22 @@ func TestExecuteBuildsImageOutputRef(t *testing.T) {
 	if updated.OutputRef["image_count"] != 2 {
 		t.Fatalf("image_count = %#v, want 2", updated.OutputRef["image_count"])
 	}
+	if updated.OutputRef["shot_image_count"] != 3 {
+		t.Fatalf("shot_image_count = %#v, want 3", updated.OutputRef["shot_image_count"])
+	}
 	if updated.OutputRef["generated_image_count"] != 0 {
 		t.Fatalf("generated_image_count = %#v, want 0", updated.OutputRef["generated_image_count"])
 	}
-	if updated.OutputRef["fallback_image_count"] != 2 {
-		t.Fatalf("fallback_image_count = %#v, want 2", updated.OutputRef["fallback_image_count"])
+	if updated.OutputRef["fallback_image_count"] != 3 {
+		t.Fatalf("fallback_image_count = %#v, want 3", updated.OutputRef["fallback_image_count"])
 	}
 
 	artifact := readImageArtifact(t, workspaceDir, "jobs/job_image_123/images/image_manifest.json")
 	if len(artifact.Images) != 2 {
 		t.Fatalf("len(artifact.Images) = %d, want 2", len(artifact.Images))
+	}
+	if len(artifact.ShotImages) != 3 {
+		t.Fatalf("len(artifact.ShotImages) = %d, want 3", len(artifact.ShotImages))
 	}
 	assertJPEGDimensions(t, artifactFullPath(workspaceDir, artifact.Images[0].FilePath), defaultImageWidth, defaultImageHeight)
 	assertJPEGDimensions(t, artifactFullPath(workspaceDir, artifact.Images[1].FilePath), defaultImageWidth, defaultImageHeight)
@@ -169,6 +189,105 @@ func TestExecuteBuildsImageOutputRef(t *testing.T) {
 	if artifact.Images[1].PromptSourceType != "shots" {
 		t.Fatalf("artifact.Images[1].PromptSourceType = %q, want %q", artifact.Images[1].PromptSourceType, "shots")
 	}
+	if artifact.ShotImages[0].SegmentIndex != 0 || artifact.ShotImages[0].ShotIndex != 0 {
+		t.Fatalf("artifact.ShotImages[0] indexes = (%d,%d), want (0,0)", artifact.ShotImages[0].SegmentIndex, artifact.ShotImages[0].ShotIndex)
+	}
+	if artifact.ShotImages[0].PromptType != "image_to_image" {
+		t.Fatalf("artifact.ShotImages[0].PromptType = %q, want %q", artifact.ShotImages[0].PromptType, "image_to_image")
+	}
+	if artifact.ShotImages[1].PromptType != "text_to_image" {
+		t.Fatalf("artifact.ShotImages[1].PromptType = %q, want %q", artifact.ShotImages[1].PromptType, "text_to_image")
+	}
+	if artifact.ShotImages[0].FilePath != "jobs/job_image_123/images/segment_000_shot_000.jpg" {
+		t.Fatalf("artifact.ShotImages[0].FilePath = %q", artifact.ShotImages[0].FilePath)
+	}
+	assertJPEGDimensions(t, artifactFullPath(workspaceDir, artifact.ShotImages[0].FilePath), defaultImageWidth, defaultImageHeight)
+	assertJPEGDimensions(t, artifactFullPath(workspaceDir, artifact.ShotImages[1].FilePath), defaultImageWidth, defaultImageHeight)
+	assertJPEGDimensions(t, artifactFullPath(workspaceDir, artifact.ShotImages[2].FilePath), defaultImageWidth, defaultImageHeight)
+	if len(artifact.ShotImages[0].MatchedCharacters) != 1 {
+		t.Fatalf("len(artifact.ShotImages[0].MatchedCharacters) = %d, want 1", len(artifact.ShotImages[0].MatchedCharacters))
+	}
+	if len(artifact.ShotImages[1].MatchedCharacters) != 0 {
+		t.Fatalf("len(artifact.ShotImages[1].MatchedCharacters) = %d, want 0", len(artifact.ShotImages[1].MatchedCharacters))
+	}
+}
+
+func TestExecuteUsesPortraitAspectRatioWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	executor := NewExecutor(workspaceDir)
+	writer := newArtifactWriter(workspaceDir)
+	job := model.Job{
+		ID:       1,
+		PublicID: "job_image_portrait_123",
+	}
+	task := model.Task{
+		ID:  22,
+		Key: "image",
+		Payload: map[string]any{
+			"image_style":  "cinematic",
+			"aspect_ratio": "9:16",
+		},
+	}
+	dependencies := map[string]model.Task{
+		"script": {
+			Key: "script",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_image_portrait_123/script.json",
+			},
+		},
+		"character_image": {
+			Key: "character_image",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_image_portrait_123/character_images/manifest.json",
+			},
+		},
+	}
+	if err := writer.WriteJSON("jobs/job_image_portrait_123/script.json", scriptArtifactOutput{
+		Segments: []scriptArtifactSegment{
+			{
+				Index: 0,
+				Shots: []scriptArtifactShot{
+					{Index: 0, TextPrompt: "Lantern light falls across the narrow alley"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(script) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_image_portrait_123/character_images/manifest.json", CharacterImageOutput{}); err != nil {
+		t.Fatalf("WriteJSON(character_image) error = %v", err)
+	}
+
+	updated, err := executor.Execute(context.Background(), job, task, dependencies)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if updated.OutputRef["aspect_ratio"] != "9:16" {
+		t.Fatalf("aspect_ratio = %#v, want %q", updated.OutputRef["aspect_ratio"], "9:16")
+	}
+
+	artifact := readImageArtifact(t, workspaceDir, "jobs/job_image_portrait_123/images/image_manifest.json")
+	if len(artifact.ShotImages) != 1 {
+		t.Fatalf("len(artifact.ShotImages) = %d, want 1", len(artifact.ShotImages))
+	}
+	if artifact.ShotImages[0].Width != 720 || artifact.ShotImages[0].Height != 1280 {
+		t.Fatalf(
+			"shot image size = %dx%d, want 720x1280",
+			artifact.ShotImages[0].Width,
+			artifact.ShotImages[0].Height,
+		)
+	}
+	if !strings.Contains(artifact.ShotImages[0].Prompt, "9:16") {
+		t.Fatalf("shot prompt = %q, want 9:16 suffix", artifact.ShotImages[0].Prompt)
+	}
+	assertJPEGDimensions(
+		t,
+		artifactFullPath(workspaceDir, artifact.ShotImages[0].FilePath),
+		720,
+		1280,
+	)
 }
 
 func TestExecuteWritesFallbackImageWhenLiveGenerationFails(t *testing.T) {
@@ -222,6 +341,9 @@ func TestExecuteWritesFallbackImageWhenLiveGenerationFails(t *testing.T) {
 		},
 	}); err != nil {
 		t.Fatalf("WriteJSON(character_image) error = %v", err)
+	}
+	if err := writer.WriteBytes("jobs/job_image_live_fallback_123/character_images/character_000.jpg", []byte("reference-image")); err != nil {
+		t.Fatalf("WriteBytes(character_image file) error = %v", err)
 	}
 
 	updated, err := executor.Execute(context.Background(), job, task, dependencies)
@@ -367,6 +489,36 @@ func TestResolveSegmentPromptSourceReturnsEmptyWithoutShots(t *testing.T) {
 	}
 }
 
+func TestResolveSegmentPromptSourceIgnoresLegacyPromptField(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+	  "index": 0,
+	  "shots": [
+	    {
+	      "index": 0,
+	      "prompt": "legacy prompt should not be consumed"
+	    }
+	  ]
+	}`)
+
+	var segment scriptArtifactSegment
+	if err := json.Unmarshal(raw, &segment); err != nil {
+		t.Fatalf("Unmarshal(segment) error = %v", err)
+	}
+
+	source := resolveSegmentPromptSource(segment, nil)
+	if source.Type != "empty" {
+		t.Fatalf("source.Type = %q, want %q", source.Type, "empty")
+	}
+	if source.Text != "" {
+		t.Fatalf("source.Text = %q, want empty", source.Text)
+	}
+	if len(source.Shots) != 0 {
+		t.Fatalf("len(source.Shots) = %d, want 0", len(source.Shots))
+	}
+}
+
 func TestExecuteWritesLiveImageWhenClientInjected(t *testing.T) {
 	t.Parallel()
 
@@ -426,6 +578,9 @@ func TestExecuteWritesLiveImageWhenClientInjected(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteJSON(character_image) error = %v", err)
 	}
+	if err := writer.WriteBytes("jobs/job_image_live_123/character_images/character_000.jpg", []byte("reference-image")); err != nil {
+		t.Fatalf("WriteBytes(character_image file) error = %v", err)
+	}
 
 	updated, err := executor.Execute(context.Background(), job, task, dependencies)
 	if err != nil {
@@ -433,6 +588,12 @@ func TestExecuteWritesLiveImageWhenClientInjected(t *testing.T) {
 	}
 	if len(client.requests) != 1 {
 		t.Fatalf("len(client.requests) = %d, want 1", len(client.requests))
+	}
+	if len(client.requests[0].ReferenceImages) != 1 {
+		t.Fatalf("len(client.requests[0].ReferenceImages) = %d, want 1", len(client.requests[0].ReferenceImages))
+	}
+	if !strings.Contains(client.requests[0].Prompt, "图1中的人物") {
+		t.Fatalf("client.requests[0].Prompt = %q, want placeholder text", client.requests[0].Prompt)
 	}
 
 	artifact := readImageArtifact(t, workspaceDir, "jobs/job_image_live_123/images/image_manifest.json")
@@ -463,6 +624,104 @@ func TestExecuteWritesLiveImageWhenClientInjected(t *testing.T) {
 	}
 	if updated.OutputRef["fallback_image_count"] != 0 {
 		t.Fatalf("fallback_image_count = %#v, want 0", updated.OutputRef["fallback_image_count"])
+	}
+}
+
+func TestExecuteReusesLatestSuccessfulShotImageAfterRetriesExhausted(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	client := &fakeClient{
+		responses: []Response{
+			{
+				RequestID: "req_img_1",
+				Model:     "qwen-image-2.0",
+				ImageURL:  "https://example.com/generated-1.jpg",
+				ImageData: []byte("fake-image-bytes-1"),
+			},
+		},
+		errs: []error{
+			nil,
+			assertiveError("shot generation failed"),
+			assertiveError("shot generation failed"),
+			assertiveError("shot generation failed"),
+		},
+	}
+	executor := NewExecutorWithClient(client, GenerationConfig{
+		Model: "qwen-image-2.0",
+	}, workspaceDir)
+	writer := newArtifactWriter(workspaceDir)
+	job := model.Job{
+		ID:       1,
+		PublicID: "job_image_reuse_123",
+	}
+	task := model.Task{
+		ID:      25,
+		Key:     "image",
+		Payload: map[string]any{"image_style": "cinematic"},
+	}
+	dependencies := map[string]model.Task{
+		"script": {
+			Key: "script",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_image_reuse_123/script.json",
+			},
+		},
+		"character_image": {
+			Key: "character_image",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_image_reuse_123/character_images/manifest.json",
+			},
+		},
+	}
+	if err := writer.WriteJSON("jobs/job_image_reuse_123/script.json", scriptArtifactOutput{
+		Segments: []scriptArtifactSegment{
+			{
+				Index: 0,
+				Shots: []scriptArtifactShot{
+					{Index: 0, TextPrompt: "first shot at dawn"},
+					{Index: 1, TextPrompt: "second shot at dusk"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(script) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_image_reuse_123/character_images/manifest.json", CharacterImageOutput{}); err != nil {
+		t.Fatalf("WriteJSON(character_image) error = %v", err)
+	}
+
+	updated, err := executor.Execute(context.Background(), job, task, dependencies)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if updated.OutputRef["generated_image_count"] != 2 {
+		t.Fatalf("generated_image_count = %#v, want 2", updated.OutputRef["generated_image_count"])
+	}
+	if updated.OutputRef["fallback_image_count"] != 0 {
+		t.Fatalf("fallback_image_count = %#v, want 0", updated.OutputRef["fallback_image_count"])
+	}
+
+	artifact := readImageArtifact(t, workspaceDir, "jobs/job_image_reuse_123/images/image_manifest.json")
+	if len(artifact.ShotImages) != 2 {
+		t.Fatalf("len(artifact.ShotImages) = %d, want 2", len(artifact.ShotImages))
+	}
+	if artifact.ShotImages[1].IsFallback {
+		t.Fatal("artifact.ShotImages[1].IsFallback = true, want false")
+	}
+	if !artifact.ShotImages[1].FilledFromPrevious {
+		t.Fatal("artifact.ShotImages[1].FilledFromPrevious = false, want true")
+	}
+	firstBytes, err := os.ReadFile(artifactFullPath(workspaceDir, artifact.ShotImages[0].FilePath))
+	if err != nil {
+		t.Fatalf("ReadFile(first shot) error = %v", err)
+	}
+	secondBytes, err := os.ReadFile(artifactFullPath(workspaceDir, artifact.ShotImages[1].FilePath))
+	if err != nil {
+		t.Fatalf("ReadFile(second shot) error = %v", err)
+	}
+	if string(firstBytes) != "fake-image-bytes-1" || string(secondBytes) != "fake-image-bytes-1" {
+		t.Fatalf("reused bytes mismatch: first=%q second=%q", string(firstBytes), string(secondBytes))
 	}
 }
 

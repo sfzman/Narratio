@@ -235,9 +235,15 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	if !strings.Contains(client.requests[0].Messages[0].Content, "中文影视分镜设计助手") {
 		t.Fatalf("system prompt = %q", client.requests[0].Messages[0].Content)
 	}
+	if !strings.Contains(client.requests[0].Messages[0].Content, "3 个镜头") {
+		t.Fatalf("system prompt = %q, want dynamic shot count", client.requests[0].Messages[0].Content)
+	}
 	userPrompt := client.requests[0].Messages[1].Content
 	if !strings.Contains(userPrompt, "【当前分段开始】") {
 		t.Fatalf("user prompt = %q", userPrompt)
+	}
+	if !strings.Contains(userPrompt, "当前段目标分镜数是 3") {
+		t.Fatalf("user prompt = %q, want dynamic shot count hint", userPrompt)
 	}
 	if !strings.Contains(userPrompt, `"text": "第一段原文"`) {
 		t.Fatalf("user prompt = %q", userPrompt)
@@ -285,8 +291,9 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	if artifact.Segments[1].Index != 1 {
 		t.Fatalf("segments[1].index = %d", artifact.Segments[1].Index)
 	}
-	if len(artifact.Segments[0].Shots) != defaultShotsPerSegment {
-		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), defaultShotsPerSegment)
+	wantShots := targetShotCount(TextSegment{Text: "第一段原文", CharCount: 5})
+	if len(artifact.Segments[0].Shots) != wantShots {
+		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), wantShots)
 	}
 	if effectiveShotPrompt(artifact.Segments[0].Shots[0]) != "主角在雨夜现身。" {
 		t.Fatalf("segments[0].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[0].Shots[0]))
@@ -294,8 +301,8 @@ func TestScriptExecutorExecuteWithInjectedTextClient(t *testing.T) {
 	if effectiveShotPrompt(artifact.Segments[1].Shots[0]) != "对手逼近。" {
 		t.Fatalf("segments[1].shots[0] effective prompt = %q", effectiveShotPrompt(artifact.Segments[1].Shots[0]))
 	}
-	if effectiveShotPrompt(artifact.Segments[1].Shots[9]) == "" {
-		t.Fatal("segments[1].shots[9] effective prompt = empty, want fallback-filled shot")
+	if effectiveShotPrompt(artifact.Segments[1].Shots[wantShots-1]) == "" {
+		t.Fatalf("segments[1].shots[%d] effective prompt = empty, want fallback-filled shot", wantShots-1)
 	}
 	if got.OutputRef["segment_count"] != 2 {
 		t.Fatalf("segment_count = %#v", got.OutputRef["segment_count"])

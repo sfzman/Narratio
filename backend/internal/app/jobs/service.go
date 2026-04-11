@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
+	"github.com/sfzman/Narratio/backend/internal/scheduler"
 	"github.com/sfzman/Narratio/backend/internal/store"
 )
 
@@ -27,14 +28,29 @@ type JobRunner interface {
 	Enqueue(jobID int64)
 }
 
+type JobRunController interface {
+	JobRunner
+	Cancel(jobID int64) bool
+	IsActive(jobID int64) bool
+	IsRunning(jobID int64) bool
+}
+
+type workflowJobStore interface {
+	store.WorkflowStore
+	store.JobStore
+	store.TaskStore
+}
+
 type Service struct {
-	store  store.WorkflowStore
+	store  workflowJobStore
 	runner JobRunner
 	clock  Clock
 	log    *slog.Logger
 }
 
-func NewService(workflowStore store.WorkflowStore, runner ...JobRunner) *Service {
+const defaultVideoCount = 2
+
+func NewService(workflowStore workflowJobStore, runner ...JobRunner) *Service {
 	var jobRunner JobRunner
 	if len(runner) > 0 {
 		jobRunner = runner[0]
@@ -46,6 +62,12 @@ func NewService(workflowStore store.WorkflowStore, runner ...JobRunner) *Service
 		clock:  realClock{},
 		log:    slog.Default(),
 	}
+}
+
+type CancelOutcome struct {
+	Job       model.Job
+	Cancelled bool
+	Deleted   bool
 }
 
 func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job, []model.Task, error) {
@@ -76,6 +98,7 @@ func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job,
 		"task_count", len(tasks),
 		"voice_id", normalized.Options.VoiceID,
 		"image_style", normalized.Options.ImageStyle,
+		"aspect_ratio", normalized.Options.AspectRatio,
 	)
 	createdTasks, err := s.store.InitializeJob(ctx, &job, tasks)
 	if err != nil {
@@ -102,10 +125,70 @@ func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job,
 	return job, createdTasks, nil
 }
 
+func (s *Service) CancelJob(ctx context.Context, publicID string) (CancelOutcome, error) {
+	job, err := s.store.GetJobByPublicID(ctx, publicID)
+	if err != nil {
+		return CancelOutcome{}, fmt.Errorf("get job by public id: %w", err)
+	}
+	tasks, err := s.store.ListTasksByJob(ctx, job.ID)
+	if err != nil {
+		return CancelOutcome{}, fmt.Errorf("list tasks by job: %w", err)
+	}
+
+	if isTerminalJobStatus(job.Status) {
+		return CancelOutcome{
+			Job:       job,
+			Cancelled: false,
+			Deleted:   false,
+		}, nil
+	}
+
+	running := false
+	if controller, ok := s.runner.(JobRunController); ok {
+		running = controller.IsRunning(job.ID)
+	}
+
+	updatedTasks := make([]model.Task, 0, len(tasks))
+	for _, task := range tasks {
+		switch task.Status {
+		case model.TaskStatusPending, model.TaskStatusReady:
+			task.Status = model.TaskStatusCancelled
+			task.UpdatedAt = s.clock.Now()
+			if err := s.store.UpdateTask(ctx, task); err != nil {
+				return CancelOutcome{}, fmt.Errorf("update cancelled task %d: %w", task.ID, err)
+			}
+		}
+		updatedTasks = append(updatedTasks, task)
+	}
+
+	if running {
+		job.Status = model.JobStatusCancelling
+	} else {
+		job.Status, job.Progress, _ = scheduler.AggregateJobState(updatedTasks, true)
+	}
+	job.UpdatedAt = s.clock.Now()
+	if err := s.store.UpdateJob(ctx, job); err != nil {
+		return CancelOutcome{}, fmt.Errorf("update cancelled job: %w", err)
+	}
+
+	if controller, ok := s.runner.(JobRunController); ok && running {
+		controller.Cancel(job.ID)
+	}
+
+	return CancelOutcome{
+		Job:       job,
+		Cancelled: true,
+		Deleted:   false,
+	}, nil
+}
+
 func normalizeSpec(spec model.JobSpec) model.JobSpec {
 	spec.Article = strings.TrimSpace(spec.Article)
 	spec.Options.VoiceID = strings.TrimSpace(spec.Options.VoiceID)
 	spec.Options.ImageStyle = strings.TrimSpace(spec.Options.ImageStyle)
+	spec.Options.AspectRatio = model.ParseAspectRatio(
+		string(spec.Options.AspectRatio),
+	).Normalized()
 
 	if spec.Options.VoiceID == "" {
 		spec.Options.VoiceID = "default"
@@ -113,8 +196,20 @@ func normalizeSpec(spec model.JobSpec) model.JobSpec {
 	if spec.Options.ImageStyle == "" {
 		spec.Options.ImageStyle = "realistic"
 	}
+	spec.Options.VideoCount = normalizeVideoCount(spec.Options.VideoCount)
 
 	return spec
+}
+
+func normalizeVideoCount(value *int) *int {
+	if value == nil {
+		return intPtr(defaultVideoCount)
+	}
+	if *value < 0 {
+		return intPtr(0)
+	}
+
+	return intPtr(*value)
 }
 
 func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
@@ -184,7 +279,19 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			model.ResourceImageGen,
 			[]string{"script", "character_image"},
 			map[string]any{
-				"image_style": spec.Options.ImageStyle,
+				"image_style":  spec.Options.ImageStyle,
+				"aspect_ratio": string(spec.Options.AspectRatio),
+			},
+			now,
+		),
+		newTask(
+			"shot_video",
+			model.TaskTypeShotVideo,
+			model.ResourceVideoGen,
+			[]string{"image"},
+			map[string]any{
+				"video_count":  derefInt(spec.Options.VideoCount),
+				"aspect_ratio": string(spec.Options.AspectRatio),
 			},
 			now,
 		),
@@ -192,11 +299,25 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			"video",
 			model.TaskTypeVideo,
 			model.ResourceVideoRender,
-			[]string{"tts", "image"},
-			map[string]any{},
+			[]string{"tts", "shot_video"},
+			map[string]any{
+				"aspect_ratio": string(spec.Options.AspectRatio),
+			},
 			now,
 		),
 	}
+}
+
+func intPtr(value int) *int {
+	return &value
+}
+
+func derefInt(value *int) int {
+	if value == nil {
+		return 0
+	}
+
+	return *value
 }
 
 func newTask(

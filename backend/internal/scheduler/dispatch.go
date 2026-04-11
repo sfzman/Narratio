@@ -3,14 +3,17 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
 )
 
 const (
-	defaultTaskExecutionTimeout          = 12 * time.Minute
-	defaultScriptSegmentExecutionTimeout = 200 * time.Second
+	defaultTaskExecutionTimeout             = 12 * time.Minute
+	defaultScriptSegmentExecutionTimeout    = 200 * time.Second
+	defaultShotVideoExecutionTimeoutPerShot = 200 * time.Second
+	defaultVideoRenderExecutionTimeout      = 30 * time.Minute
 )
 
 type Executor interface {
@@ -61,6 +64,8 @@ func DispatchNextReadyTask(
 		registry,
 		resources,
 		defaultScriptSegmentExecutionTimeout,
+		defaultShotVideoExecutionTimeoutPerShot,
+		defaultVideoRenderExecutionTimeout,
 	)
 }
 
@@ -71,6 +76,8 @@ func DispatchNextReadyTaskWithTimeouts(
 	registry *ExecutorRegistry,
 	resources ResourceManager,
 	scriptTimeoutPerSegment time.Duration,
+	shotVideoTimeoutPerShot time.Duration,
+	videoRenderTimeout time.Duration,
 ) (DispatchResult, error) {
 	updated := PromoteReadyTasks(tasks)
 
@@ -91,27 +98,62 @@ func DispatchNextReadyTaskWithTimeouts(
 		updated[i].Status = model.TaskStatusRunning
 		updated[i].Attempt++
 		dependencies := dependencyTasks(updated[i], updated)
+		slog.Info("executor triggered",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+			"task_id", updated[i].ID,
+			"task_key", updated[i].Key,
+			"task_type", updated[i].Type,
+			"resource_key", updated[i].ResourceKey,
+			"attempt", updated[i].Attempt,
+		)
 		executionCtx, cancel := withTaskExecutionTimeout(
 			ctx,
 			updated[i],
 			dependencies,
 			scriptTimeoutPerSegment,
+			shotVideoTimeoutPerShot,
+			videoRenderTimeout,
 		)
 		executedTask, err := executor.Execute(executionCtx, job, updated[i], dependencies)
+		executionErr := executionCtx.Err()
 		cancel()
 		resources.Release(task.ResourceKey)
 		executedTask = mergeExecutedTask(updated[i], executedTask)
 		if err != nil {
-			executedTask.Status = model.TaskStatusFailed
-			executedTask.Error = &model.TaskError{
-				Code:    "task_execution_failed",
-				Message: err.Error(),
+			if executionErr == context.Canceled {
+				executedTask.Status = model.TaskStatusCancelled
+				executedTask.Error = nil
+				updated = cancelUnfinishedTasks(updated, i)
+				slog.Warn("task execution cancelled",
+					"job_id", job.ID,
+					"job_public_id", job.PublicID,
+					"task_id", updated[i].ID,
+					"task_key", updated[i].Key,
+					"task_type", updated[i].Type,
+				)
+			} else {
+				executedTask.Status = model.TaskStatusFailed
+				executedTask.Error = &model.TaskError{
+					Code:    "task_execution_failed",
+					Message: err.Error(),
+				}
+				slog.Error("task execution failed",
+					"job_id", job.ID,
+					"job_public_id", job.PublicID,
+					"task_id", updated[i].ID,
+					"task_key", updated[i].Key,
+					"task_type", updated[i].Type,
+					"resource_key", updated[i].ResourceKey,
+					"error", err,
+				)
 			}
 		} else {
 			executedTask.Status = model.TaskStatusSucceeded
 			executedTask.Error = nil
 		}
 		updated[i] = executedTask
+		updated = PromoteReadyTasks(updated)
 
 		return DispatchResult{
 			Tasks:           updated,
@@ -124,13 +166,37 @@ func DispatchNextReadyTaskWithTimeouts(
 	return DispatchResult{Tasks: updated}, nil
 }
 
+func cancelUnfinishedTasks(tasks []model.Task, runningIndex int) []model.Task {
+	updated := make([]model.Task, 0, len(tasks))
+	for i, task := range tasks {
+		if i != runningIndex {
+			switch task.Status {
+			case model.TaskStatusPending, model.TaskStatusReady, model.TaskStatusRunning:
+				task.Status = model.TaskStatusCancelled
+				task.Error = nil
+			}
+		}
+		updated = append(updated, task)
+	}
+
+	return updated
+}
+
 func withTaskExecutionTimeout(
 	parent context.Context,
 	task model.Task,
 	dependencies map[string]model.Task,
 	scriptTimeoutPerSegment time.Duration,
+	shotVideoTimeoutPerShot time.Duration,
+	videoRenderTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	timeout := taskExecutionTimeout(task, dependencies, scriptTimeoutPerSegment)
+	timeout := taskExecutionTimeout(
+		task,
+		dependencies,
+		scriptTimeoutPerSegment,
+		shotVideoTimeoutPerShot,
+		videoRenderTimeout,
+	)
 	if timeout <= 0 {
 		return context.WithCancel(parent)
 	}
@@ -142,7 +208,19 @@ func taskExecutionTimeout(
 	task model.Task,
 	dependencies map[string]model.Task,
 	scriptTimeoutPerSegment time.Duration,
+	shotVideoTimeoutPerShot time.Duration,
+	videoRenderTimeout time.Duration,
 ) time.Duration {
+	if task.Type == model.TaskTypeVideo {
+		if videoRenderTimeout <= 0 {
+			return defaultVideoRenderExecutionTimeout
+		}
+
+		return videoRenderTimeout
+	}
+	if task.Type == model.TaskTypeShotVideo {
+		return shotVideoExecutionTimeout(task, dependencies, shotVideoTimeoutPerShot)
+	}
 	if task.Type != model.TaskTypeScript {
 		return defaultTaskExecutionTimeout
 	}
@@ -156,6 +234,39 @@ func taskExecutionTimeout(
 	}
 
 	return time.Duration(segmentCount) * scriptTimeoutPerSegment
+}
+
+func shotVideoExecutionTimeout(
+	task model.Task,
+	dependencies map[string]model.Task,
+	shotVideoTimeoutPerShot time.Duration,
+) time.Duration {
+	if shotVideoTimeoutPerShot <= 0 {
+		shotVideoTimeoutPerShot = defaultShotVideoExecutionTimeoutPerShot
+	}
+
+	requestedCount := shotVideoRequestedCount(task)
+	if requestedCount == 0 {
+		return defaultTaskExecutionTimeout
+	}
+
+	shotImageCount := taskOutputInt(dependencies["image"].OutputRef, "shot_image_count")
+	if shotImageCount > 0 && requestedCount > shotImageCount {
+		requestedCount = shotImageCount
+	}
+	if requestedCount <= 0 {
+		return defaultTaskExecutionTimeout
+	}
+
+	return time.Duration(requestedCount) * shotVideoTimeoutPerShot
+}
+
+func shotVideoRequestedCount(task model.Task) int {
+	if task.Payload == nil {
+		return 0
+	}
+
+	return taskOutputInt(task.Payload, "video_count")
 }
 
 func scriptSegmentCount(task model.Task) int {

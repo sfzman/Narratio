@@ -74,14 +74,21 @@ func TestCharacterImageExecutorWritesArtifact(t *testing.T) {
 	assertJPEGDimensions(
 		t,
 		artifactFullPath(workspaceDir, artifact.Images[0].FilePath),
-		defaultImageWidth,
-		defaultImageHeight,
+		characterReferenceImageWidth,
+		characterReferenceImageHeight,
 	)
 	if len(artifact.Images[0].MatchTerms) == 0 {
 		t.Fatal("len(artifact.Images[0].MatchTerms) = 0, want non-zero")
 	}
 	if artifact.Images[0].MatchTerms[0] != "Lin Qing" {
 		t.Fatalf("artifact.Images[0].MatchTerms[0] = %q, want %q", artifact.Images[0].MatchTerms[0], "Lin Qing")
+	}
+	if artifact.Images[0].Prompt == "" {
+		t.Fatal("artifact.Images[0].Prompt = empty, want non-empty")
+	}
+	if artifact.Images[0].Prompt != "" &&
+		!containsAll(artifact.Images[0].Prompt, []string{"单人", "正面", "全身", "居中站姿"}) {
+		t.Fatalf("artifact.Images[0].Prompt = %q, want fixed character reference framing", artifact.Images[0].Prompt)
 	}
 	if !artifact.Images[0].IsFallback {
 		t.Fatal("artifact.Images[0].IsFallback = false, want true")
@@ -160,6 +167,12 @@ func TestCharacterImageExecutorWritesLiveImageWhenClientInjected(t *testing.T) {
 	}
 	if len(client.requests) != 1 {
 		t.Fatalf("len(client.requests) = %d, want 1", len(client.requests))
+	}
+	if client.requests[0].Size != characterReferenceImageSize() {
+		t.Fatalf("client.requests[0].Size = %q, want %q", client.requests[0].Size, characterReferenceImageSize())
+	}
+	if !containsAll(client.requests[0].Prompt, []string{"单人", "正面", "全身", "居中站姿"}) {
+		t.Fatalf("client.requests[0].Prompt = %q, want fixed character reference framing", client.requests[0].Prompt)
 	}
 	if updated.OutputRef["generated_character_image_count"] != 1 {
 		t.Fatalf("generated_character_image_count = %#v, want 1", updated.OutputRef["generated_character_image_count"])

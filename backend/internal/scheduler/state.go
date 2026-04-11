@@ -41,11 +41,17 @@ func AggregateJobState(tasks []model.Task, cancellationRequested bool) (model.Jo
 	if cancellationRequested && hasUnfinished(counts) {
 		return model.JobStatusCancelling, progress, counts
 	}
+	if cancellationRequested {
+		return model.JobStatusCancelled, progress, counts
+	}
 	if counts.Running > 0 {
 		return model.JobStatusRunning, progress, counts
 	}
 	if counts.Failed > 0 {
 		return model.JobStatusFailed, progress, counts
+	}
+	if counts.Cancelled > 0 && !hasUnfinished(counts) {
+		return model.JobStatusCancelled, progress, counts
 	}
 	if counts.Cancelled == counts.Total {
 		return model.JobStatusCancelled, progress, counts

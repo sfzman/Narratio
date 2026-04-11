@@ -14,8 +14,10 @@ const (
 )
 
 type RenderOptions struct {
-	VoiceID    string `json:"voice_id"`
-	ImageStyle string `json:"image_style"`
+	VoiceID     string      `json:"voice_id"`
+	ImageStyle  string      `json:"image_style"`
+	AspectRatio AspectRatio `json:"aspect_ratio,omitempty"`
+	VideoCount  *int        `json:"video_count,omitempty"`
 }
 
 type JobSpec struct {

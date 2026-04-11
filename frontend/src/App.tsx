@@ -5,6 +5,8 @@ type CreateJobRequest = {
   options: {
     voice_id: string;
     image_style: string;
+    aspect_ratio: "16:9" | "9:16";
+    video_count: number;
   };
 };
 
@@ -98,6 +100,8 @@ const defaultRequest: CreateJobRequest = {
   options: {
     voice_id: "default",
     image_style: "realistic",
+    aspect_ratio: "9:16",
+    video_count: 2,
   },
 };
 
@@ -398,6 +402,43 @@ function App() {
                   }))
                 }
               />
+            </label>
+            <label className="field">
+              <span>Video Count</span>
+              <input
+                min={0}
+                step={1}
+                type="number"
+                value={request.options.video_count}
+                onChange={(event) => {
+                  const nextValue = Number.parseInt(event.target.value, 10);
+                  setRequest((current) => ({
+                    ...current,
+                    options: {
+                      ...current.options,
+                      video_count: Number.isNaN(nextValue) ? 0 : Math.max(0, nextValue),
+                    },
+                  }));
+                }}
+              />
+            </label>
+            <label className="field">
+              <span>Aspect Ratio</span>
+              <select
+                value={request.options.aspect_ratio}
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    options: {
+                      ...current.options,
+                      aspect_ratio: event.target.value as "16:9" | "9:16",
+                    },
+                  }))
+                }
+              >
+                <option value="9:16">竖屏 9:16</option>
+                <option value="16:9">横屏 16:9</option>
+              </select>
             </label>
           </div>
           <button className="primary-button" onClick={() => void createJob()} type="button">

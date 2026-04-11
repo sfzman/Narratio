@@ -22,7 +22,14 @@ Usage:
 
 Purpose:
   Start a temporary backend with ENABLE_LIVE_IMAGE_GENERATION=true,
-  submit one minimal job, poll until completion, and print artifact paths.
+  submit one minimal job, poll until completion, and verify:
+    1. character_image artifacts are written
+    2. image shot_images contain the required fields
+    3. live image source_image_url fields are surfaced when available
+
+Note:
+  This smoke explicitly disables live TTS so unrelated TTS failures do not
+  block character_image/image verification.
 
 Useful overrides:
   SMOKE_PORT
@@ -91,36 +98,99 @@ root = Path(os.environ["SMOKE_WORKSPACE_DIR"])
 job_id = os.environ["JOB_ID"]
 tasks = json.loads(Path(os.environ["TASKS_JSON"]).read_text())
 
+character_image_task = next(item for item in tasks["data"]["tasks"] if item["key"] == "character_image")
 image_task = next(item for item in tasks["data"]["tasks"] if item["key"] == "image")
 tts_task = next(item for item in tasks["data"]["tasks"] if item["key"] == "tts")
 video_task = next(item for item in tasks["data"]["tasks"] if item["key"] == "video")
 
+character_image_output = character_image_task["output_ref"]
 image_output = image_task["output_ref"]
 tts_output = tts_task["output_ref"]
 video_output = video_task["output_ref"]
 
+character_manifest = root / character_image_output["artifact_path"]
 image_manifest = root / image_output["artifact_path"]
-generated_image_path = root / image_output["images"][0]["file_path"]
-subtitle_path = root / tts_output["subtitle_artifact_ref"]
+character_data = json.loads(character_manifest.read_text())
+image_data = json.loads(image_manifest.read_text())
+
+character_images = character_data.get("images", [])
+shot_images = image_data.get("shot_images", [])
+segment_images = image_output.get("images", [])
 audio_path = root / tts_output["audio_segment_paths"][0]
+
+missing_character_files = [
+    item.get("file_path", "")
+    for item in character_images
+    if not (root / item.get("file_path", "")).exists()
+]
+
+required_shot_fields = ("segment_index", "shot_index", "file_path", "prompt")
+invalid_shot_entries = []
+for item in shot_images:
+    missing = [field for field in required_shot_fields if not item.get(field) and item.get(field) != 0]
+    if missing:
+        invalid_shot_entries.append(
+            {
+                "segment_index": item.get("segment_index"),
+                "shot_index": item.get("shot_index"),
+                "missing_fields": missing,
+            }
+        )
+
+missing_shot_files = [
+    item.get("file_path", "")
+    for item in shot_images
+    if not (root / item.get("file_path", "")).exists()
+]
+
+generated_character_count = sum(1 for item in character_images if not item.get("is_fallback", False))
+generated_shot_count = sum(1 for item in shot_images if not item.get("is_fallback", False))
+character_source_url_count = sum(1 for item in character_images if item.get("source_image_url"))
+shot_source_url_count = sum(1 for item in shot_images if item.get("source_image_url"))
+
+segment_image_path = None
+if segment_images:
+    segment_image_path = root / segment_images[0]["file_path"]
 
 summary = {
     "job_id": job_id,
     "workspace_dir": str(root),
     "job_status": "completed",
+    "character_image_manifest_path": str(character_manifest),
+    "character_image_count": len(character_images),
+    "generated_character_image_count": generated_character_count,
+    "character_source_image_url_count": character_source_url_count,
+    "missing_character_image_files": missing_character_files,
     "generated_image_count": image_output.get("generated_image_count"),
     "fallback_image_count": image_output.get("fallback_image_count"),
     "image_manifest_path": str(image_manifest),
-    "generated_image_path": str(generated_image_path),
-    "generated_image_exists": generated_image_path.exists(),
-    "generated_image_size": generated_image_path.stat().st_size if generated_image_path.exists() else None,
-    "subtitle_path": str(subtitle_path),
-    "subtitle_exists": subtitle_path.exists(),
+    "shot_image_count": len(shot_images),
+    "generated_shot_image_count": generated_shot_count,
+    "shot_source_image_url_count": shot_source_url_count,
+    "invalid_shot_entries": invalid_shot_entries,
+    "missing_shot_image_files": missing_shot_files,
+    "segment_summary_image_path": str(segment_image_path) if segment_image_path else None,
+    "segment_summary_image_exists": segment_image_path.exists() if segment_image_path else False,
     "audio_path": str(audio_path),
     "audio_exists": audio_path.exists(),
     "video_artifact_ref": video_output.get("artifact_path"),
 }
+
+errors = []
+if not character_images:
+    errors.append("character_images manifest is empty")
+if missing_character_files:
+    errors.append("some character image files are missing")
+if not shot_images:
+    errors.append("image shot_images manifest is empty")
+if invalid_shot_entries:
+    errors.append("some shot_images entries are missing required fields")
+if missing_shot_files:
+    errors.append("some shot image files are missing")
+
 print(json.dumps(summary, ensure_ascii=False, indent=2))
+if errors:
+    raise SystemExit("smoke verification failed: " + "; ".join(errors))
 PY
 }
 
@@ -142,6 +212,8 @@ echo "  base_url: $BASE_URL"
   WORKSPACE_DIR="$SMOKE_WORKSPACE_DIR" \
   ENABLE_LIVE_IMAGE_GENERATION=true \
   ENABLE_LIVE_TEXT_GENERATION=false \
+  TTS_API_BASE_URL= \
+  TTS_JWT_PRIVATE_KEY= \
   go run cmd/server/main.go
 ) >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!

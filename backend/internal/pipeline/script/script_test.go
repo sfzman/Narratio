@@ -107,8 +107,12 @@ func TestScriptExecutorExecute(t *testing.T) {
 	if artifact.Segments[0].Index != 0 {
 		t.Fatalf("segments[0].index = %d", artifact.Segments[0].Index)
 	}
-	if len(artifact.Segments[0].Shots) != defaultShotsPerSegment {
-		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), defaultShotsPerSegment)
+	wantShots := targetShotCount(TextSegment{
+		Text:      "A short article for script generation.",
+		CharCount: 32,
+	})
+	if len(artifact.Segments[0].Shots) != wantShots {
+		t.Fatalf("len(segments[0].shots) = %d, want %d", len(artifact.Segments[0].Shots), wantShots)
 	}
 	if effectiveShotPrompt(artifact.Segments[0].Shots[0]) == "" {
 		t.Fatal("segments[0].shots[0] effective prompt = empty, want non-empty")

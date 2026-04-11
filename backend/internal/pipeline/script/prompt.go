@@ -122,7 +122,12 @@ func buildChineseScriptPrompts(
 	outline OutlineOutput,
 	characters CharacterSheetOutput,
 ) (string, string) {
-	systemPrompt := `你是一名中文影视分镜设计助手，负责把当前小说分段拆成适合“图像分镜生成”的 10 个镜头。
+	targetShots := defaultShotsPerSegment
+	if len(segmentation.Segments) > 0 {
+		targetShots = targetShotCount(segmentation.Segments[0])
+	}
+
+	systemPrompt := fmt.Sprintf(`你是一名中文影视分镜设计助手，负责把当前小说分段拆成适合“图像分镜生成”的 %d 个镜头。
 
 你会同时收到三类上下文：
 1. 完整故事大纲
@@ -137,7 +142,7 @@ func buildChineseScriptPrompts(
 5. 只输出 JSON，不要输出额外说明。
 
 请严格遵守：
-1. 必须输出且只输出 10 个分镜，不能少也不能多。
+1. 必须输出且只输出 %d 个分镜，不能少也不能多。
 2. 不得新增原文没有的重要人物、关键事件、关键道具。
 3. 可以做低风险视觉补足，但必须与原文和人物表一致。
 4. 每个镜头都要有明确视觉主体、动作、场景、氛围。
@@ -173,9 +178,10 @@ func buildChineseScriptPrompts(
       ]
     }
   ]
-}`
+}`, targetShots, targetShots)
 	userPrompt := fmt.Sprintf(
-		"下面请基于提供的上下文，只为当前这一个 segment 生成分镜 script。\n\n【当前分段开始】\n%s\n【当前分段结束】\n\n【剧情大纲上下文开始】\n%s\n【剧情大纲上下文结束】\n\n【人物设定上下文开始】\n%s\n【人物设定上下文结束】",
+		"下面请基于提供的上下文，只为当前这一个 segment 生成分镜 script。当前段目标分镜数是 %d，请严格与目标数量保持一致。\n\n【当前分段开始】\n%s\n【当前分段结束】\n\n【剧情大纲上下文开始】\n%s\n【剧情大纲上下文结束】\n\n【人物设定上下文开始】\n%s\n【人物设定上下文结束】",
+		targetShots,
 		mustJSONString(segmentation),
 		mustJSONString(outline),
 		mustJSONString(characters),

@@ -18,6 +18,10 @@ type JobCreator interface {
 	CreateJob(ctx context.Context, spec model.JobSpec) (model.Job, []model.Task, error)
 }
 
+type JobCanceler interface {
+	CancelJob(ctx context.Context, publicID string) (jobapp.CancelOutcome, error)
+}
+
 type JobReader interface {
 	GetJobByPublicID(ctx context.Context, publicID string) (model.Job, error)
 }
@@ -37,10 +41,12 @@ type HealthStatus struct {
 
 type Handlers struct {
 	jobs       JobCreator
+	canceler   JobCanceler
 	jobReader  JobReader
 	taskReader TaskReader
 	dispatcher JobDispatcher
 	health     HealthStatus
+	workspace  string
 }
 
 func NewRouter(
@@ -49,8 +55,14 @@ func NewRouter(
 	taskReader TaskReader,
 	dispatcher JobDispatcher,
 	health HealthStatus,
+	workspaceDir ...string,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
+
+	resolvedWorkspaceDir := ""
+	if len(workspaceDir) > 0 {
+		resolvedWorkspaceDir = workspaceDir[0]
+	}
 
 	h := Handlers{
 		jobs:       jobs,
@@ -58,6 +70,10 @@ func NewRouter(
 		taskReader: taskReader,
 		dispatcher: dispatcher,
 		health:     health,
+		workspace:  resolvedWorkspaceDir,
+	}
+	if canceler, ok := jobs.(JobCanceler); ok {
+		h.canceler = canceler
 	}
 
 	router := gin.New()
@@ -69,6 +85,8 @@ func NewRouter(
 	api.POST("/jobs", h.createJob)
 	api.GET("/jobs/:job_id", h.getJob)
 	api.GET("/jobs/:job_id/tasks", h.getJobTasks)
+	api.GET("/jobs/:job_id/download", h.downloadJobVideo)
+	api.DELETE("/jobs/:job_id", h.cancelJob)
 	api.POST("/jobs/:job_id/dispatch-once", h.dispatchOnce)
 
 	return router

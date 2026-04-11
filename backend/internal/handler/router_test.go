@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,9 +19,11 @@ import (
 )
 
 type fakeJobCreator struct {
-	job  model.Job
-	spec model.JobSpec
-	err  error
+	job           model.Job
+	spec          model.JobSpec
+	err           error
+	cancelOutcome jobapp.CancelOutcome
+	cancelErr     error
 }
 
 func (f *fakeJobCreator) CreateJob(_ context.Context, spec model.JobSpec) (model.Job, []model.Task, error) {
@@ -28,6 +33,14 @@ func (f *fakeJobCreator) CreateJob(_ context.Context, spec model.JobSpec) (model
 	}
 
 	return f.job, nil, nil
+}
+
+func (f *fakeJobCreator) CancelJob(_ context.Context, _ string) (jobapp.CancelOutcome, error) {
+	if f.cancelErr != nil {
+		return jobapp.CancelOutcome{}, f.cancelErr
+	}
+
+	return f.cancelOutcome, nil
 }
 
 type fakeJobReader struct {
@@ -135,8 +148,10 @@ func TestCreateJob(t *testing.T) {
 	body, err := json.Marshal(map[string]any{
 		"article": "hello world",
 		"options": map[string]any{
-			"voice_id":    "default",
-			"image_style": "realistic",
+			"voice_id":     "default",
+			"image_style":  "realistic",
+			"aspect_ratio": "16:9",
+			"video_count":  5,
 		},
 	})
 	if err != nil {
@@ -158,6 +173,12 @@ func TestCreateJob(t *testing.T) {
 	if service.spec.Options.VoiceID != "default" {
 		t.Fatalf("voice_id = %q", service.spec.Options.VoiceID)
 	}
+	if service.spec.Options.AspectRatio != model.AspectRatioLandscape16x9 {
+		t.Fatalf("aspect_ratio = %q", service.spec.Options.AspectRatio)
+	}
+	if service.spec.Options.VideoCount == nil || *service.spec.Options.VideoCount != 5 {
+		t.Fatalf("video_count = %#v", service.spec.Options.VideoCount)
+	}
 }
 
 func TestCreateJobRejectsEmptyArticle(t *testing.T) {
@@ -167,6 +188,42 @@ func TestCreateJobRejectsEmptyArticle(t *testing.T) {
 		http.MethodPost,
 		"/api/v1/jobs",
 		bytes.NewBufferString(`{"article":"   "}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+func TestCreateJobRejectsNegativeVideoCount(t *testing.T) {
+	router := NewRouter(&fakeJobCreator{}, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/jobs",
+		bytes.NewBufferString(`{"article":"hello","options":{"video_count":-1}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+func TestCreateJobRejectsInvalidAspectRatio(t *testing.T) {
+	router := NewRouter(&fakeJobCreator{}, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/jobs",
+		bytes.NewBufferString(`{"article":"hello","options":{"aspect_ratio":"1:1"}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -219,6 +276,205 @@ func TestGetJob(t *testing.T) {
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"runtime_hint":"当前有 task 处于运行中，可继续刷新查看进展。"`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestDownloadJobVideo(t *testing.T) {
+	workspaceDir := t.TempDir()
+	videoRelativePath := filepath.ToSlash(filepath.Join("jobs", "job_abc123", "output", "final.mp4"))
+	videoPath := filepath.Join(workspaceDir, filepath.Clean(videoRelativePath))
+	if err := os.MkdirAll(filepath.Dir(videoPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	videoData := []byte("fake-mp4-binary")
+	if err := os.WriteFile(videoPath, videoData, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	router := NewRouter(
+		nil,
+		&fakeJobReader{
+			job: model.Job{
+				PublicID: "job_abc123",
+				Status:   model.JobStatusCompleted,
+				Result: &model.JobResult{
+					VideoPath: videoRelativePath,
+					FileSize:  int64(len(videoData)),
+				},
+			},
+		},
+		nil,
+		nil,
+		HealthStatus{},
+		workspaceDir,
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_abc123/download", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "video/mp4" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := recorder.Header().Get("Content-Disposition"); got != `attachment; filename="narratio_job_abc123.mp4"` {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if !bytes.Equal(recorder.Body.Bytes(), videoData) {
+		t.Fatalf("body = %q", recorder.Body.Bytes())
+	}
+}
+
+func TestDownloadJobVideoSupportsRangeRequests(t *testing.T) {
+	workspaceDir := t.TempDir()
+	videoRelativePath := filepath.ToSlash(filepath.Join("jobs", "job_range", "output", "final.mp4"))
+	videoPath := filepath.Join(workspaceDir, filepath.Clean(videoRelativePath))
+	if err := os.MkdirAll(filepath.Dir(videoPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	videoData := []byte("0123456789")
+	if err := os.WriteFile(videoPath, videoData, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	router := NewRouter(
+		nil,
+		&fakeJobReader{
+			job: model.Job{
+				PublicID: "job_range",
+				Status:   model.JobStatusCompleted,
+				Result: &model.JobResult{
+					VideoPath: videoRelativePath,
+					FileSize:  int64(len(videoData)),
+				},
+			},
+		},
+		nil,
+		nil,
+		HealthStatus{},
+		workspaceDir,
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_range/download", nil)
+	request.Header.Set("Range", "bytes=0-3")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("Accept-Ranges = %q", got)
+	}
+	if got := recorder.Header().Get("Content-Range"); got != fmt.Sprintf("bytes 0-3/%d", len(videoData)) {
+		t.Fatalf("Content-Range = %q", got)
+	}
+	if !bytes.Equal(recorder.Body.Bytes(), []byte("0123")) {
+		t.Fatalf("body = %q", recorder.Body.Bytes())
+	}
+}
+
+func TestDownloadJobVideoRejectsIncompleteJob(t *testing.T) {
+	router := NewRouter(
+		nil,
+		&fakeJobReader{
+			job: model.Job{PublicID: "job_running", Status: model.JobStatusRunning},
+		},
+		nil,
+		nil,
+		HealthStatus{},
+		t.TempDir(),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_running/download", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":1003`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestDownloadJobVideoReturnsInternalErrorWhenFileMissing(t *testing.T) {
+	workspaceDir := t.TempDir()
+	router := NewRouter(
+		nil,
+		&fakeJobReader{
+			job: model.Job{
+				PublicID: "job_missing_video",
+				Status:   model.JobStatusCompleted,
+				Result: &model.JobResult{
+					VideoPath: "jobs/job_missing_video/output/final.mp4",
+				},
+			},
+		},
+		nil,
+		nil,
+		HealthStatus{},
+		workspaceDir,
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_missing_video/download", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":5002`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestCancelJob(t *testing.T) {
+	service := &fakeJobCreator{
+		cancelOutcome: jobapp.CancelOutcome{
+			Job: model.Job{
+				PublicID: "job_cancel_123",
+				Status:   model.JobStatusCancelling,
+			},
+			Cancelled: true,
+			Deleted:   false,
+		},
+	}
+	router := NewRouter(service, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/job_cancel_123", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"cancelled":true`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"status":"cancelling"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestCancelJobNotFound(t *testing.T) {
+	service := &fakeJobCreator{cancelErr: store.ErrJobNotFound}
+	router := NewRouter(service, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/job_missing", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", recorder.Code)
 	}
 }
 
