@@ -89,6 +89,9 @@ func TestLoadRuntime(t *testing.T) {
 	if runtime.BackgroundRunner == nil {
 		t.Fatal("BackgroundRunner = nil")
 	}
+	if runtime.BackgroundRunner.WorkerCount() != 4 {
+		t.Fatalf("BackgroundRunner.WorkerCount() = %d, want 4", runtime.BackgroundRunner.WorkerCount())
+	}
 	if runtime.RunCoordinator == nil {
 		t.Fatal("RunCoordinator = nil")
 	}
@@ -181,6 +184,33 @@ func TestLoadRuntimeBuildsVideoClientWhenEnabled(t *testing.T) {
 
 	if runtime.VideoClient == nil {
 		t.Fatal("VideoClient = nil, want live client when enabled")
+	}
+}
+
+func TestLoadRuntimeUsesConfiguredBackgroundWorkerCount(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "narratio-workers.db")
+	stubFFmpegProbe(t, nil, 10*time.Second)
+
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", dbPath)
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("BACKGROUND_RUNNER_WORKER_COUNT", "6")
+
+	runtime, err := LoadRuntime()
+	if err != nil {
+		t.Fatalf("LoadRuntime() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runtime.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	if runtime.BackgroundRunner == nil {
+		t.Fatal("BackgroundRunner = nil")
+	}
+	if runtime.BackgroundRunner.WorkerCount() != 6 {
+		t.Fatalf("BackgroundRunner.WorkerCount() = %d, want 6", runtime.BackgroundRunner.WorkerCount())
 	}
 }
 

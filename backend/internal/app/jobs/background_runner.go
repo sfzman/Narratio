@@ -13,6 +13,7 @@ const (
 	defaultDispatchTimeout = 2 * time.Hour
 	defaultMaxDispatchStep = 32
 	defaultQueueSize       = 128
+	defaultWorkerCount     = 4
 )
 
 type RunCoordinator struct {
@@ -100,6 +101,7 @@ type BackgroundRunner struct {
 	dispatcher      SchedulerDispatcher
 	coordinator     *RunCoordinator
 	queue           chan int64
+	workerCount     int
 	dispatchTimeout time.Duration
 	maxDispatchStep int
 	log             *slog.Logger
@@ -110,17 +112,32 @@ func NewBackgroundRunner(
 	dispatcher SchedulerDispatcher,
 	coordinator *RunCoordinator,
 ) *BackgroundRunner {
+	return NewBackgroundRunnerWithWorkerCount(dispatcher, coordinator, defaultWorkerCount)
+}
+
+func NewBackgroundRunnerWithWorkerCount(
+	dispatcher SchedulerDispatcher,
+	coordinator *RunCoordinator,
+	workerCount int,
+) *BackgroundRunner {
+	if workerCount <= 0 {
+		workerCount = defaultWorkerCount
+	}
+
 	runner := &BackgroundRunner{
 		dispatcher:      dispatcher,
 		coordinator:     coordinator,
 		queue:           make(chan int64, defaultQueueSize),
+		workerCount:     workerCount,
 		dispatchTimeout: defaultDispatchTimeout,
 		maxDispatchStep: defaultMaxDispatchStep,
 		log:             slog.Default().With("component", "background_runner"),
 	}
 
-	runner.wg.Add(1)
-	go runner.loop()
+	for workerIndex := 0; workerIndex < runner.workerCount; workerIndex++ {
+		runner.wg.Add(1)
+		go runner.loop(workerIndex)
+	}
 
 	return runner
 }
@@ -167,6 +184,14 @@ func (r *BackgroundRunner) IsRunning(jobID int64) bool {
 	return r.coordinator.IsRunning(jobID)
 }
 
+func (r *BackgroundRunner) WorkerCount() int {
+	if r == nil {
+		return 0
+	}
+
+	return r.workerCount
+}
+
 func (r *BackgroundRunner) Close() error {
 	if r == nil {
 		return nil
@@ -177,10 +202,11 @@ func (r *BackgroundRunner) Close() error {
 	return nil
 }
 
-func (r *BackgroundRunner) loop() {
+func (r *BackgroundRunner) loop(workerIndex int) {
 	defer r.wg.Done()
 
 	for jobID := range r.queue {
+		r.log.Debug("background worker picked job", "worker_index", workerIndex, "job_id", jobID)
 		r.runJob(jobID)
 		r.coordinator.Release(jobID)
 	}

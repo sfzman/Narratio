@@ -126,7 +126,7 @@ pending/ready -> skipped
 - `pending`：依赖尚未满足
 - `ready`：依赖已满足，等待调度
 - `running`：已获得资源并交给 executor
-- `skipped`：因上游失败或工作流裁剪而不执行
+- `skipped`：因上游失败、上游已被 `skipped`，或工作流裁剪而不执行
 
 ## DAG 与工作流构建
 
@@ -140,7 +140,8 @@ pending/ready -> skipped
 - 使用固定 workflow builder 生成首版 task DAG
 - 通过 store 的原子接口一次性写入 `job + tasks`
 - 当前实现会在入库成功后把 `job.ID` 投递给后台 runner
-- 后台 runner 会循环调用 `scheduler.DispatchOnce(jobID)`，每一轮尽可能并行触发所有已 `ready` 且资源配额允许的 task，直到 job 进入终态或当前没有可派发 task
+- 后台 runner 当前是“跨 job 并发 worker 池”模型：同一个 job 仍只会被一个 worker 持有，但不同 job 可由多个 worker 并发推进
+- 每个 worker 会循环调用 `scheduler.DispatchOnce(jobID)`，每一轮尽可能并行触发所有已 `ready` 且资源配额允许的 task，直到该 job 进入终态或当前没有可派发 task
 
 MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬编码顺序调用。
 
@@ -200,11 +201,12 @@ const (
 调度规则：
 
 1. 只有所有依赖都 `succeeded` 的 task 才能进入 `ready`
-2. `ready` task 只有在对应资源池有空闲配额时才能启动
-3. task 结束后必须释放资源配额
-4. 调度器不关心具体 API，只关心 task 状态和资源占用
-5. executor 在 `running` 期间可通过 `model.ReportTaskProgress(...)` 上报瞬时进度；scheduler 会把该信息暂存到 `task.output_ref.progress`，供前端轮询展示
-6. `task.output_ref.progress` 只用于运行中观测；task 进入终态时该字段会被清理，避免把临时进度混入最终 artifact 元数据
+2. 若任一依赖进入 `failed` 或 `skipped`，其下游 `pending / ready` task 会被标记为 `skipped`
+3. `ready` task 只有在对应资源池有空闲配额时才能启动
+4. task 结束后必须释放资源配额
+5. 调度器不关心具体 API，只关心 task 状态和资源占用
+6. executor 在 `running` 期间可通过 `model.ReportTaskProgress(...)` 上报瞬时进度；scheduler 会把该信息暂存到 `task.output_ref.progress`，供前端轮询展示
+7. `task.output_ref.progress` 只用于运行中观测；task 进入终态时该字段会被清理，避免把临时进度混入最终 artifact 元数据
 
 当前最小实现约束：
 
@@ -217,7 +219,7 @@ const (
 - 当前 `character_image` 独立 task 已接入：成功后会把人物参考图 manifest 落盘到 workspace，并在非 live 模式下写出 fallback JPG
 - 当前 `shot_video` 独立 task 已接入：会读取 `image.shot_images`，默认写入 `image_fallback` clip 清单；若显式开启 `ENABLE_LIVE_VIDEO_GENERATION=true`，则会逐 shot 调真实图生视频并回填 `generated_video` clip
 - 当前 `shot_video.payload.video_count` 已接入：执行时会按 `segment_index / shot_index` 排序，只为前 `n` 个 shot 尝试真实图生视频，其余 shot 直接回退为 `image_fallback`
-- 当前最小后台 runner 已接入，默认会在 job 创建后自动持续推进
+- 当前最小后台 runner 已接入，默认会在 job 创建后自动持续推进；跨 job 并发度由 `BACKGROUND_RUNNER_WORKER_COUNT` 控制，同一 job 仍通过 run coordinator 保证不会重复并发执行
 - `POST /jobs/:id/dispatch-once` 仍保留为开发态接口；若同一 job 已在后台运行，该接口返回 no-op
 
 ## 取消语义

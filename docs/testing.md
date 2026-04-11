@@ -104,13 +104,14 @@ func TestScriptRun(t *testing.T) {
 - [ ] CreateJob 会规范化默认选项（含 `aspect_ratio=9:16`、`video_count=12`）并写入 `JobSpec`
 - [ ] CreateJob 会同步创建 workflow 对应的 task DAG
 - [x] 取消 queued job 会将未开始 task 标记为 cancelled
+- [x] background runner 当前支持跨 job 并发 worker，不同 job 不再被单个长 job 串行阻塞
 
 ### scheduler
 - [ ] 所有依赖满足后，task 从 pending 进入 ready
 - [ ] 共享同一 `ResourceKey` 的 task 会共同受并发上限约束
 - [x] 无依赖冲突且资源配额允许的 task 可在同一轮 `DispatchOnce` 中并行启动
 - [x] executor 运行中通过 `model.ReportTaskProgress(...)` 上报的进度会被持久化到 `task.output_ref.progress`，并在 task 进入终态后清理
-- [ ] 上游 task 失败后，下游 task 正确变为 skipped 或保持 pending
+- [x] 上游 task 失败后，下游 task 会按 fail-fast 语义递归标记为 `skipped`
 - [ ] 运行中 task 的 panic 被 recover 后状态置为 failed
 
 ### executor

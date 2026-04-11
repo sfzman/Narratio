@@ -11,6 +11,7 @@ var narratioEnvKeys = []string{
 	"DATABASE_DRIVER",
 	"DATABASE_DSN",
 	"WORKSPACE_DIR",
+	"BACKGROUND_RUNNER_WORKER_COUNT",
 	"RESOURCE_LOCAL_CPU_CONCURRENCY",
 	"RESOURCE_LLM_TEXT_CONCURRENCY",
 	"RESOURCE_TTS_CONCURRENCY",
@@ -65,6 +66,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 
 	if cfg.Port != "8080" {
 		t.Fatalf("Port = %q", cfg.Port)
+	}
+	if cfg.BackgroundRunnerWorkerCount != 4 {
+		t.Fatalf("BackgroundRunnerWorkerCount = %d", cfg.BackgroundRunnerWorkerCount)
 	}
 	if cfg.ScriptTimeoutPerSegmentSeconds != 200 {
 		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d", cfg.ScriptTimeoutPerSegmentSeconds)
@@ -177,6 +181,22 @@ func TestLoadReadsLiveTextGenerationFlag(t *testing.T) {
 
 	if !cfg.EnableLiveTextGeneration {
 		t.Fatal("EnableLiveTextGeneration = false, want true")
+	}
+}
+
+func TestLoadReadsBackgroundRunnerWorkerCount(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("BACKGROUND_RUNNER_WORKER_COUNT", "6")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.BackgroundRunnerWorkerCount != 6 {
+		t.Fatalf("BackgroundRunnerWorkerCount = %d, want 6", cfg.BackgroundRunnerWorkerCount)
 	}
 }
 

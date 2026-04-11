@@ -1256,6 +1256,22 @@ func TestDispatchOncePersistsFailedTaskAfterExecutionContextTimeout(t *testing.T
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
+		{
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{"outline"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"article":  "story",
+				"voice_id": "default",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	})
 	if err != nil {
 		t.Fatalf("InitializeJob() error = %v", err)
@@ -1295,6 +1311,9 @@ func TestDispatchOncePersistsFailedTaskAfterExecutionContextTimeout(t *testing.T
 	}
 	if persistedTasks[0].Error == nil {
 		t.Fatal("task error = nil, want persisted error")
+	}
+	if persistedTasks[1].Status != model.TaskStatusSkipped {
+		t.Fatalf("downstream task status = %q, want %q", persistedTasks[1].Status, model.TaskStatusSkipped)
 	}
 }
 

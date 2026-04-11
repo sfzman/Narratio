@@ -95,6 +95,7 @@ TTS_DEFAULT_VOICE_ID=male_calm
 TTS_EMOTION_PROMPT=https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/male-read-emo.wav
 
 WORKSPACE_DIR=./workspace
+BACKGROUND_RUNNER_WORKER_COUNT=4
 RESOURCE_LOCAL_CPU_CONCURRENCY=4
 RESOURCE_LLM_TEXT_CONCURRENCY=2
 RESOURCE_TTS_CONCURRENCY=3
@@ -114,6 +115,7 @@ SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 - 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health`、`GET /api/v1/voices`、`POST /api/v1/jobs`、`GET /api/v1/jobs/:job_id`、`GET /api/v1/jobs/:job_id/tasks` 与开发态 `POST /api/v1/jobs/:job_id/dispatch-once`
 - SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
 - 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
+- 后台 runner 当前支持跨 job 并发 worker 池；并发 worker 数由 `BACKGROUND_RUNNER_WORKER_COUNT` 控制，默认 `4`
 - `segmentation / outline / character_sheet / script / tts / character_image / image / shot_video` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
 - `video` 在 runtime 中已切到真实 FFmpeg 渲染路径；成功后会把最终成片写到 `WORKSPACE_DIR/jobs/{job_id}/output/final.mp4`
 - 资源池并发上限当前已支持通过环境变量配置：`RESOURCE_LOCAL_CPU_CONCURRENCY`、`RESOURCE_LLM_TEXT_CONCURRENCY`、`RESOURCE_TTS_CONCURRENCY`、`RESOURCE_IMAGE_GEN_CONCURRENCY`、`RESOURCE_VIDEO_GEN_CONCURRENCY`、`RESOURCE_VIDEO_RENDER_CONCURRENCY`
@@ -133,6 +135,7 @@ SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 - `FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS` 用来控制服务启动时 `ffmpeg -version` 检查超时，默认 `10` 秒
 - 当前代码已支持按 `ENABLE_LIVE_VIDEO_GENERATION=true` 条件组装真实 DashScope 视频 client；即使该开关关闭，`video` 仍会基于 fallback 图 + TTS 真实合成最终 MP4
 - 默认资源池并发上限分别为：`local_cpu=4`、`llm_text=2`、`tts=3`、`image_gen=2`、`video_gen=1`、`video_render=1`
+- `BACKGROUND_RUNNER_WORKER_COUNT` 控制“同时可被后台主动推进的 job 数”；它不直接替代资源池限流，真实 task 并发上限仍由各 `RESOURCE_*_CONCURRENCY` 决定
 - 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口；`segmentation` 始终走本地 deterministic 路径
 - 即使配置了 `DASHSCOPE_IMAGE_API_KEY`，只要不显式打开该开关，`image` / `character_image` 也不会调用真实 DashScope 图像接口
 - 即使已经配置了 `DASHSCOPE_VIDEO_*` 这组参数，若不显式打开 `ENABLE_LIVE_VIDEO_GENERATION=true`，当前版本也不会启用真实图生视频

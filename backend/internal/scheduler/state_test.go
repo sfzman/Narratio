@@ -38,6 +38,33 @@ func TestPromoteReadyTasks(t *testing.T) {
 	}
 }
 
+func TestPromoteReadyTasksSkipsBlockedDownstream(t *testing.T) {
+	t.Parallel()
+
+	tasks := []model.Task{
+		{Key: "outline", Status: model.TaskStatusFailed},
+		{
+			Key:       "script",
+			Status:    model.TaskStatusPending,
+			DependsOn: []string{"outline"},
+		},
+		{
+			Key:       "image",
+			Status:    model.TaskStatusPending,
+			DependsOn: []string{"script"},
+		},
+	}
+
+	got := PromoteReadyTasks(tasks)
+
+	if got[1].Status != model.TaskStatusSkipped {
+		t.Fatalf("script status = %q, want %q", got[1].Status, model.TaskStatusSkipped)
+	}
+	if got[2].Status != model.TaskStatusSkipped {
+		t.Fatalf("image status = %q, want %q", got[2].Status, model.TaskStatusSkipped)
+	}
+}
+
 func TestAggregateJobState(t *testing.T) {
 	t.Parallel()
 
@@ -329,6 +356,14 @@ func TestDispatchNextReadyTaskMarksFailure(t *testing.T) {
 			Status:      model.TaskStatusReady,
 			ResourceKey: model.ResourceImageGen,
 		},
+		{
+			ID:          21,
+			Key:         "video",
+			Type:        model.TaskTypeVideo,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceVideoRender,
+			DependsOn:   []string{"image"},
+		},
 	}
 
 	registry := NewExecutorRegistry(map[model.TaskType]Executor{
@@ -359,6 +394,9 @@ func TestDispatchNextReadyTaskMarksFailure(t *testing.T) {
 	}
 	if result.Tasks[0].Error == nil || result.Tasks[0].Error.Code != "task_execution_failed" {
 		t.Fatalf("image error = %#v, want task_execution_failed", result.Tasks[0].Error)
+	}
+	if result.Tasks[1].Status != model.TaskStatusSkipped {
+		t.Fatalf("video status = %q, want %q", result.Tasks[1].Status, model.TaskStatusSkipped)
 	}
 }
 

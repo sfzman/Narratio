@@ -13,6 +13,7 @@ type Config struct {
 	Port                               string
 	DatabaseDriver                     string
 	DatabaseDSN                        string
+	BackgroundRunnerWorkerCount        int
 	ResourceLocalCPUConcurrency        int
 	ResourceLLMTextConcurrency         int
 	ResourceTTSConcurrency             int
@@ -82,6 +83,7 @@ func Load() (*Config, error) {
 		Port:                               envOrDefault("PORT", "8080"),
 		DatabaseDriver:                     databaseDriver,
 		DatabaseDSN:                        databaseDSN,
+		BackgroundRunnerWorkerCount:        envAsIntOrDefault("BACKGROUND_RUNNER_WORKER_COUNT", 4),
 		ResourceLocalCPUConcurrency:        envAsIntOrDefault("RESOURCE_LOCAL_CPU_CONCURRENCY", 4),
 		ResourceLLMTextConcurrency:         envAsIntOrDefault("RESOURCE_LLM_TEXT_CONCURRENCY", 2),
 		ResourceTTSConcurrency:             envAsIntOrDefault("RESOURCE_TTS_CONCURRENCY", 3),

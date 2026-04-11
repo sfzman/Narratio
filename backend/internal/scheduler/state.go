@@ -14,20 +14,32 @@ type TaskCounts struct {
 }
 
 func PromoteReadyTasks(tasks []model.Task) []model.Task {
-	index := make(map[string]model.Task, len(tasks))
-	for _, task := range tasks {
-		index[task.Key] = task
-	}
-
-	updated := make([]model.Task, 0, len(tasks))
-	for _, task := range tasks {
-		if task.Status == model.TaskStatusPending && dependenciesSatisfied(task, index) {
-			task.Status = model.TaskStatusReady
+	updated := cloneSchedulingTasks(tasks)
+	for {
+		index := make(map[string]model.Task, len(updated))
+		for _, task := range updated {
+			index[task.Key] = task
 		}
-		updated = append(updated, task)
-	}
 
-	return updated
+		changed := false
+		for i, task := range updated {
+			if shouldSkipTask(task, index) {
+				task.Status = model.TaskStatusSkipped
+				task.Error = nil
+				updated[i] = task
+				changed = true
+				continue
+			}
+			if task.Status == model.TaskStatusPending && dependenciesSatisfied(task, index) {
+				task.Status = model.TaskStatusReady
+				updated[i] = task
+				changed = true
+			}
+		}
+		if !changed {
+			return updated
+		}
+	}
 }
 
 func AggregateJobState(tasks []model.Task, cancellationRequested bool) (model.JobStatus, int, TaskCounts) {
@@ -117,4 +129,31 @@ func dependenciesSatisfied(task model.Task, index map[string]model.Task) bool {
 	}
 
 	return true
+}
+
+func shouldSkipTask(task model.Task, index map[string]model.Task) bool {
+	if task.Status != model.TaskStatusPending && task.Status != model.TaskStatusReady {
+		return false
+	}
+
+	for _, depKey := range task.DependsOn {
+		dep, ok := index[depKey]
+		if !ok {
+			return false
+		}
+		if dep.Status == model.TaskStatusFailed || dep.Status == model.TaskStatusSkipped {
+			return true
+		}
+	}
+
+	return false
+}
+
+func cloneSchedulingTasks(tasks []model.Task) []model.Task {
+	cloned := make([]model.Task, 0, len(tasks))
+	for _, task := range tasks {
+		cloned = append(cloned, task)
+	}
+
+	return cloned
 }

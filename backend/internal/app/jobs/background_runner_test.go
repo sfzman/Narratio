@@ -11,9 +11,11 @@ import (
 )
 
 type fakeBackgroundScheduler struct {
-	mu      sync.Mutex
-	calls   []int64
-	results []fakeDispatchStep
+	mu           sync.Mutex
+	calls        []int64
+	resultsByJob map[int64][]fakeDispatchStep
+	started      chan int64
+	blockByJob   map[int64]chan struct{}
 }
 
 type fakeDispatchStep struct {
@@ -27,25 +29,37 @@ func (f *fakeBackgroundScheduler) DispatchOnce(
 	jobID int64,
 ) (scheduler.DispatchResult, model.Job, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	f.calls = append(f.calls, jobID)
-	step := f.results[0]
-	f.results = f.results[1:]
+	steps := f.resultsByJob[jobID]
+	step := steps[0]
+	f.resultsByJob[jobID] = steps[1:]
+	started := f.started
+	block := f.blockByJob[jobID]
+	f.mu.Unlock()
+
+	if started != nil {
+		started <- jobID
+	}
+	if block != nil {
+		<-block
+	}
+
 	return step.result, step.job, step.err
 }
 
 func TestBackgroundRunnerDispatchesUntilTerminal(t *testing.T) {
 	coord := NewRunCoordinator()
 	dispatcher := &fakeBackgroundScheduler{
-		results: []fakeDispatchStep{
-			{
-				result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "outline"},
-				job:    model.Job{ID: 7, PublicID: "job_abc123", Status: model.JobStatusQueued, Progress: 16},
-			},
-			{
-				result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "video"},
-				job:    model.Job{ID: 7, PublicID: "job_abc123", Status: model.JobStatusCompleted, Progress: 100},
+		resultsByJob: map[int64][]fakeDispatchStep{
+			7: {
+				{
+					result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "outline"},
+					job:    model.Job{ID: 7, PublicID: "job_abc123", Status: model.JobStatusQueued, Progress: 16},
+				},
+				{
+					result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "video"},
+					job:    model.Job{ID: 7, PublicID: "job_abc123", Status: model.JobStatusCompleted, Progress: 100},
+				},
 			},
 		},
 	}
@@ -79,4 +93,64 @@ func TestBackgroundRunnerDispatchesUntilTerminal(t *testing.T) {
 		t.Fatal("job 7 should have been released after terminal state")
 	}
 	coord.Release(7)
+}
+
+func TestBackgroundRunnerRunsDifferentJobsConcurrently(t *testing.T) {
+	coord := NewRunCoordinator()
+	dispatcher := &fakeBackgroundScheduler{
+		resultsByJob: map[int64][]fakeDispatchStep{
+			7: {
+				{
+					result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "outline"},
+					job:    model.Job{ID: 7, PublicID: "job_7", Status: model.JobStatusCompleted, Progress: 100},
+				},
+			},
+			8: {
+				{
+					result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "outline"},
+					job:    model.Job{ID: 8, PublicID: "job_8", Status: model.JobStatusCompleted, Progress: 100},
+				},
+			},
+		},
+		started: make(chan int64, 2),
+		blockByJob: map[int64]chan struct{}{
+			7: make(chan struct{}),
+			8: make(chan struct{}),
+		},
+	}
+	runner := NewBackgroundRunnerWithWorkerCount(dispatcher, coord, 2)
+	t.Cleanup(func() {
+		_ = runner.Close()
+	})
+
+	runner.Enqueue(7)
+	runner.Enqueue(8)
+
+	started := make(map[int64]struct{}, 2)
+	deadline := time.After(500 * time.Millisecond)
+	for len(started) < 2 {
+		select {
+		case jobID := <-dispatcher.started:
+			started[jobID] = struct{}{}
+		case <-deadline:
+			t.Fatalf("started jobs = %#v, want both jobs picked by workers", started)
+		}
+	}
+
+	close(dispatcher.blockByJob[7])
+	close(dispatcher.blockByJob[8])
+
+	waitDeadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(waitDeadline) {
+		if coord.TryAcquire(7) {
+			coord.Release(7)
+			if coord.TryAcquire(8) {
+				coord.Release(8)
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("jobs 7 and 8 should have been released after concurrent completion")
 }

@@ -169,7 +169,11 @@ func LoadRuntime() (*Runtime, error) {
 		time.Duration(cfg.VideoRenderTimeoutSeconds) * time.Second,
 	)
 	runCoordinator := jobapp.NewRunCoordinator()
-	backgroundRunner := jobapp.NewBackgroundRunner(schedulerService, runCoordinator)
+	backgroundRunner := jobapp.NewBackgroundRunnerWithWorkerCount(
+		schedulerService,
+		runCoordinator,
+		cfg.BackgroundRunnerWorkerCount,
+	)
 	jobsService := jobapp.NewService(store, backgroundRunner)
 	dispatchService := jobapp.NewDispatchService(store, schedulerService, runCoordinator)
 	router := handler.NewRouter(jobsService, store, store, dispatchService, handler.HealthStatus{
@@ -187,6 +191,7 @@ func LoadRuntime() (*Runtime, error) {
 	slog.Info("runtime initialized",
 		"database_driver", cfg.DatabaseDriver,
 		"database_dsn", cfg.DatabaseDSN,
+		"background_runner_worker_count", cfg.BackgroundRunnerWorkerCount,
 		"resource_local_cpu_concurrency", cfg.ResourceLocalCPUConcurrency,
 		"resource_llm_text_concurrency", cfg.ResourceLLMTextConcurrency,
 		"resource_tts_concurrency", cfg.ResourceTTSConcurrency,
