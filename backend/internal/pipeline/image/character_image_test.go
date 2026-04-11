@@ -37,9 +37,10 @@ func TestCharacterImageExecutorWritesArtifact(t *testing.T) {
 		PublicID: "job_character_image_123",
 	}
 	task := model.Task{
-		ID:   41,
-		Key:  "character_image",
-		Type: model.TaskTypeCharacterImage,
+		ID:      41,
+		Key:     "character_image",
+		Type:    model.TaskTypeCharacterImage,
+		Payload: map[string]any{"image_style": "modern_gongbi"},
 	}
 	dependencies := map[string]model.Task{
 		"character_sheet": {
@@ -87,11 +88,14 @@ func TestCharacterImageExecutorWritesArtifact(t *testing.T) {
 		t.Fatal("artifact.Images[0].Prompt = empty, want non-empty")
 	}
 	if artifact.Images[0].Prompt != "" &&
-		!containsAll(artifact.Images[0].Prompt, []string{"单人", "正面", "全身", "居中站姿"}) {
+		!containsAll(artifact.Images[0].Prompt, []string{"单人", "正面", "全身", "居中站姿", "现代工笔人物画风"}) {
 		t.Fatalf("artifact.Images[0].Prompt = %q, want fixed character reference framing", artifact.Images[0].Prompt)
 	}
 	if !artifact.Images[0].IsFallback {
 		t.Fatal("artifact.Images[0].IsFallback = false, want true")
+	}
+	if updated.OutputRef["image_style"] != modernGongbiImageStyle {
+		t.Fatalf("image_style = %#v, want %q", updated.OutputRef["image_style"], modernGongbiImageStyle)
 	}
 	if updated.OutputRef["generated_character_image_count"] != 0 {
 		t.Fatalf("generated_character_image_count = %#v, want 0", updated.OutputRef["generated_character_image_count"])
@@ -152,7 +156,11 @@ func TestCharacterImageExecutorWritesLiveImageWhenClientInjected(t *testing.T) {
 	updated, err := executor.Execute(
 		context.Background(),
 		model.Job{PublicID: "job_character_image_live_123"},
-		model.Task{Key: "character_image", Type: model.TaskTypeCharacterImage},
+		model.Task{
+			Key:     "character_image",
+			Type:    model.TaskTypeCharacterImage,
+			Payload: map[string]any{"image_style": "realistic"},
+		},
 		map[string]model.Task{
 			"character_sheet": {
 				Key: "character_sheet",
@@ -171,7 +179,7 @@ func TestCharacterImageExecutorWritesLiveImageWhenClientInjected(t *testing.T) {
 	if client.requests[0].Size != characterReferenceImageSize() {
 		t.Fatalf("client.requests[0].Size = %q, want %q", client.requests[0].Size, characterReferenceImageSize())
 	}
-	if !containsAll(client.requests[0].Prompt, []string{"单人", "正面", "全身", "居中站姿"}) {
+	if !containsAll(client.requests[0].Prompt, []string{"单人", "正面", "全身", "居中站姿", "写实风格"}) {
 		t.Fatalf("client.requests[0].Prompt = %q, want fixed character reference framing", client.requests[0].Prompt)
 	}
 	if updated.OutputRef["generated_character_image_count"] != 1 {
@@ -205,6 +213,58 @@ func TestCharacterImageExecutorWritesLiveImageWhenClientInjected(t *testing.T) {
 	}
 	if string(data) != "character-image-bytes" {
 		t.Fatalf("generated character image bytes = %q", string(data))
+	}
+}
+
+func TestCharacterImageExecutorDefaultsToRealisticStyle(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	executor := NewCharacterImageExecutor(workspaceDir)
+	writer := newArtifactWriter(workspaceDir)
+	if err := writer.WriteJSON(
+		"jobs/job_character_image_default_style/character_sheet.json",
+		characterSheetArtifact{
+			Characters: []characterProfileArtifact{
+				{
+					Name:             "Lin Qing",
+					Appearance:       "white robe, long hair",
+					VisualSignature:  "jade pendant",
+					ImagePromptFocus: "front view, full body",
+				},
+			},
+		},
+	); err != nil {
+		t.Fatalf("WriteJSON(character_sheet) error = %v", err)
+	}
+
+	updated, err := executor.Execute(
+		context.Background(),
+		model.Job{PublicID: "job_character_image_default_style"},
+		model.Task{Key: "character_image", Type: model.TaskTypeCharacterImage},
+		map[string]model.Task{
+			"character_sheet": {
+				Key: "character_sheet",
+				OutputRef: map[string]any{
+					"artifact_path": "jobs/job_character_image_default_style/character_sheet.json",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if updated.OutputRef["image_style"] != defaultCharacterImageStyle {
+		t.Fatalf("image_style = %#v, want %q", updated.OutputRef["image_style"], defaultCharacterImageStyle)
+	}
+
+	artifact := readCharacterImageArtifact(
+		t,
+		workspaceDir,
+		"jobs/job_character_image_default_style/character_images/manifest.json",
+	)
+	if !containsAll(artifact.Images[0].Prompt, []string{"写实风格", "单人", "正面", "全身"}) {
+		t.Fatalf("artifact.Images[0].Prompt = %q, want realistic style prompt", artifact.Images[0].Prompt)
 	}
 }
 

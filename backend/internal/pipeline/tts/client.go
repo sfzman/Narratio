@@ -18,6 +18,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/sfzman/Narratio/backend/internal/model"
 )
 
 type Client interface {
@@ -31,11 +33,6 @@ type Request struct {
 	SampleRate int
 }
 
-type VoicePreset struct {
-	ID             string
-	ReferenceAudio string
-}
-
 type HTTPClient struct {
 	baseURL        *url.URL
 	privateKey     *rsa.PrivateKey
@@ -43,7 +40,7 @@ type HTTPClient struct {
 	httpClient     *http.Client
 	defaultVoiceID string
 	emotionPrompt  string
-	voicePresets   []VoicePreset
+	voicePresets   []model.VoicePreset
 }
 
 func NewHTTPClient(
@@ -156,10 +153,10 @@ func (c *HTTPClient) buildPayload(request Request) (map[string]any, error) {
 	}, nil
 }
 
-func (c *HTTPClient) resolveVoicePreset(voiceID string) VoicePreset {
-	normalized := strings.TrimSpace(voiceID)
-	if normalized == "" || normalized == "default" {
-		normalized = c.defaultVoiceID
+func (c *HTTPClient) resolveVoicePreset(voiceID string) model.VoicePreset {
+	normalized := model.NormalizeVoicePresetID(voiceID)
+	if normalized == model.DefaultVoicePresetID && strings.TrimSpace(c.defaultVoiceID) != "" {
+		normalized = strings.TrimSpace(c.defaultVoiceID)
 	}
 
 	for _, preset := range c.voicePresets {
@@ -176,7 +173,7 @@ func (c *HTTPClient) resolveVoicePreset(voiceID string) VoicePreset {
 		return c.voicePresets[0]
 	}
 
-	return VoicePreset{}
+	return model.VoicePreset{}
 }
 
 func (c *HTTPClient) buildBearerToken() (string, error) {
@@ -245,27 +242,6 @@ func base64RawURL(value []byte) string {
 	return base64.RawURLEncoding.EncodeToString(value)
 }
 
-func defaultVoicePresets() []VoicePreset {
-	return []VoicePreset{
-		{
-			ID:             "male_calm",
-			ReferenceAudio: "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%B2%89%E7%A8%B3%E9%9D%92%E5%B9%B4%E9%9F%B3.MP3",
-		},
-		{
-			ID:             "male_strong",
-			ReferenceAudio: "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E7%8E%8B%E6%98%8E%E5%86%9B.MP3",
-		},
-		{
-			ID:             "female_explainer",
-			ReferenceAudio: "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E5%A5%B3_%E8%A7%A3%E8%AF%B4%E5%B0%8F%E7%BE%8E.MP3",
-		},
-		{
-			ID:             "female_documentary",
-			ReferenceAudio: "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E5%A5%B3_%E4%B8%93%E9%A2%98%E7%89%87%E9%85%8D%E9%9F%B3.MP3",
-		},
-		{
-			ID:             "boy",
-			ReferenceAudio: "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%AD%A3%E5%A4%AA.wav",
-		},
-	}
+func defaultVoicePresets() []model.VoicePreset {
+	return model.DefaultVoicePresets()
 }

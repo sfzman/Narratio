@@ -87,6 +87,18 @@ type DispatchResponse = {
   executed_task_key: string;
 };
 
+type VoicePreset = {
+  id: string;
+  name: string;
+  reference_audio?: string;
+  preview_url?: string;
+};
+
+type VoiceListResponse = {
+  default_voice_id?: string;
+  voices: VoicePreset[];
+};
+
 type LogEntry = {
   id: string;
   tone: "info" | "success" | "error";
@@ -94,14 +106,53 @@ type LogEntry = {
   at: string;
 };
 
+const fallbackVoicePresets: VoicePreset[] = [
+  {
+    id: "male_calm",
+    name: "男_沉稳青年音",
+    reference_audio:
+      "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%B2%89%E7%A8%B3%E9%9D%92%E5%B9%B4%E9%9F%B3.MP3",
+  },
+  {
+    id: "male_strong",
+    name: "男_王明军",
+    reference_audio:
+      "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E7%8E%8B%E6%98%8E%E5%86%9B.MP3",
+  },
+  {
+    id: "female_explainer",
+    name: "女_解说小美",
+    reference_audio:
+      "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E5%A5%B3_%E8%A7%A3%E8%AF%B4%E5%B0%8F%E7%BE%8E.MP3",
+  },
+  {
+    id: "female_documentary",
+    name: "女_专题片配音",
+    reference_audio:
+      "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E5%A5%B3_%E4%B8%93%E9%A2%98%E7%89%87%E9%85%8D%E9%9F%B3.MP3",
+  },
+  {
+    id: "boy",
+    name: "正太",
+    reference_audio:
+      "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%AD%A3%E5%A4%AA.wav",
+  },
+];
+
+const defaultVoiceID = "male_calm";
+const imageStylePresets = [
+  { id: "realistic", name: "写实风格" },
+  { id: "现代工笔人物画风", name: "现代工笔人物画风" },
+] as const;
+
 const defaultRequest: CreateJobRequest = {
   article:
     "暮色落进旧城的屋檐，巷口卖糖画的摊子还亮着一盏小灯。少年提着书箱，在雨后的石板路上慢慢往家走。",
   options: {
-    voice_id: "default",
+    voice_id: defaultVoiceID,
     image_style: "realistic",
     aspect_ratio: "9:16",
-    video_count: 2,
+    video_count: 12,
   },
 };
 
@@ -124,6 +175,7 @@ function App() {
   const [job, setJob] = useState<JobStatusResponse | null>(null);
   const [tasks, setTasks] = useState<TaskDetail[]>([]);
   const [health, setHealth] = useState<Record<string, string>>({});
+  const [voicePresets, setVoicePresets] = useState<VoicePreset[]>(fallbackVoicePresets);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [autoPollingEnabled, setAutoPollingEnabled] = useState(true);
@@ -131,8 +183,11 @@ function App() {
   const lastTerminalStatusRef = useRef<string | null>(null);
   const sortedTasks = [...tasks].sort(compareTaskDetail);
   const workflowSpotlight = buildWorkflowSpotlight(job);
+  const selectedVoicePreset =
+    voicePresets.find((preset) => preset.id === request.options.voice_id) ?? null;
 
   useEffect(() => {
+    void refreshVoices();
     void refreshHealth();
   }, []);
 
@@ -223,6 +278,26 @@ function App() {
       setHealth(data.services ?? {});
     } catch (error) {
       appendLog("error", `健康检查失败：${formatError(error)}`);
+    }
+  }
+
+  async function refreshVoices() {
+    try {
+      const data = await requestJSON<VoiceListResponse>("/voices");
+      if (data.voices.length > 0) {
+        setVoicePresets(data.voices);
+      }
+
+      const nextDefaultVoiceID = data.default_voice_id ?? defaultVoiceID;
+      setRequest((current) => ({
+        ...current,
+        options: {
+          ...current.options,
+          voice_id: current.options.voice_id || nextDefaultVoiceID,
+        },
+      }));
+    } catch {
+      setVoicePresets(fallbackVoicePresets);
     }
   }
 
@@ -380,8 +455,8 @@ function App() {
           </label>
           <div className="field-row">
             <label className="field">
-              <span>Voice ID</span>
-              <input
+              <span>Voice Preset</span>
+              <select
                 value={request.options.voice_id}
                 onChange={(event) =>
                   setRequest((current) => ({
@@ -389,11 +464,32 @@ function App() {
                     options: { ...current.options, voice_id: event.target.value },
                   }))
                 }
-              />
+              >
+                {voicePresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              <small className="field-hint">
+                当前默认预设为 `male_calm`
+                {selectedVoicePreset?.preview_url || selectedVoicePreset?.reference_audio ? (
+                  <>
+                    {" · "}
+                    <a
+                      href={selectedVoicePreset.preview_url ?? selectedVoicePreset.reference_audio}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      试听参考音频
+                    </a>
+                  </>
+                ) : null}
+              </small>
             </label>
             <label className="field">
               <span>Image Style</span>
-              <input
+              <select
                 value={request.options.image_style}
                 onChange={(event) =>
                   setRequest((current) => ({
@@ -401,7 +497,14 @@ function App() {
                     options: { ...current.options, image_style: event.target.value },
                   }))
                 }
-              />
+              >
+                {imageStylePresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              <small className="field-hint">当前默认画风为写实风格。</small>
             </label>
             <label className="field">
               <span>Video Count</span>
@@ -421,6 +524,9 @@ function App() {
                   }));
                 }}
               />
+              <small className="field-hint">
+                默认 12，只对前 n 个分镜尝试图生视频，其余分镜直接回退为静态图。
+              </small>
             </label>
             <label className="field">
               <span>Aspect Ratio</span>

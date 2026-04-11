@@ -14,6 +14,8 @@ import (
 const (
 	characterReferenceImageWidth  = 832
 	characterReferenceImageHeight = 1248
+	defaultCharacterImageStyle    = "realistic"
+	modernGongbiImageStyle        = "现代工笔人物画风"
 )
 
 type CharacterImageExecutor struct {
@@ -75,6 +77,8 @@ func (e *CharacterImageExecutor) Execute(
 	task model.Task,
 	dependencies map[string]model.Task,
 ) (model.Task, error) {
+	imageStyle := resolveCharacterImageStyle(task.Payload)
+
 	characterSheetTask, ok := dependencies["character_sheet"]
 	if !ok {
 		return task, fmt.Errorf("missing dependency %q", "character_sheet")
@@ -89,7 +93,7 @@ func (e *CharacterImageExecutor) Execute(
 	}
 
 	artifactPath := fmt.Sprintf("jobs/%s/character_images/manifest.json", job.PublicID)
-	output, err := e.generateOutput(ctx, job.PublicID, characterSheet)
+	output, err := e.generateOutput(ctx, job.PublicID, imageStyle, characterSheet)
 	if err != nil {
 		return task, err
 	}
@@ -101,6 +105,7 @@ func (e *CharacterImageExecutor) Execute(
 		"artifact_type":                   "character_image",
 		"artifact_path":                   artifactPath,
 		"character_sheet_ref":             characterSheetTask.OutputRef["artifact_path"],
+		"image_style":                     imageStyle,
 		"character_image_count":           len(output.Images),
 		"generated_character_image_count": countGeneratedCharacterImages(output.Images),
 		"fallback_character_image_count":  countFallbackCharacterImages(output.Images),
@@ -121,9 +126,10 @@ func (e *CharacterImageExecutor) Execute(
 func (e *CharacterImageExecutor) generateOutput(
 	ctx context.Context,
 	jobPublicID string,
+	imageStyle string,
 	characterSheet characterSheetArtifact,
 ) (CharacterImageOutput, error) {
-	output := buildCharacterImageOutput(jobPublicID, characterSheet)
+	output := buildCharacterImageOutput(jobPublicID, imageStyle, characterSheet)
 	if err := e.generateLiveCharacterImages(ctx, output.Images); err != nil {
 		return CharacterImageOutput{}, err
 	}
@@ -136,6 +142,7 @@ func (e *CharacterImageExecutor) generateOutput(
 
 func buildCharacterImageOutput(
 	jobPublicID string,
+	imageStyle string,
 	characterSheet characterSheetArtifact,
 ) CharacterImageOutput {
 	output := CharacterImageOutput{
@@ -157,7 +164,7 @@ func buildCharacterImageOutput(
 				jobPublicID,
 				index,
 			),
-			Prompt:     buildCharacterImagePrompt(character),
+			Prompt:     buildCharacterImagePrompt(character, imageStyle),
 			MatchTerms: buildCharacterMatchTerms(name),
 			IsFallback: true,
 		})
@@ -166,12 +173,16 @@ func buildCharacterImageOutput(
 	return output
 }
 
-func buildCharacterImagePrompt(character characterProfileArtifact) string {
+func buildCharacterImagePrompt(
+	character characterProfileArtifact,
+	imageStyle string,
+) string {
 	parts := []string{
 		strings.TrimSpace(character.Name),
 		strings.TrimSpace(character.Appearance),
 		strings.TrimSpace(character.VisualSignature),
 		strings.TrimSpace(character.ImagePromptFocus),
+		characterImageStylePrompt(imageStyle),
 		"人物设定参考图，单人，正面，全身，居中站姿，完整露出头发、服装与鞋子，构图稳定，纯净背景，无文字，无水印",
 	}
 
@@ -184,6 +195,39 @@ func buildCharacterImagePrompt(character characterProfileArtifact) string {
 	}
 
 	return strings.Join(filtered, "; ")
+}
+
+func resolveCharacterImageStyle(payload map[string]any) string {
+	if payload == nil {
+		return defaultCharacterImageStyle
+	}
+
+	style, ok := payload["image_style"].(string)
+	if !ok {
+		return defaultCharacterImageStyle
+	}
+
+	return normalizeCharacterImageStyle(style)
+}
+
+func normalizeCharacterImageStyle(style string) string {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "", "realistic", "写实", "写实风格":
+		return defaultCharacterImageStyle
+	case strings.ToLower(modernGongbiImageStyle), "modern_gongbi", "gongbi":
+		return modernGongbiImageStyle
+	default:
+		return defaultCharacterImageStyle
+	}
+}
+
+func characterImageStylePrompt(imageStyle string) string {
+	switch normalizeCharacterImageStyle(imageStyle) {
+	case modernGongbiImageStyle:
+		return "现代工笔人物画风，细腻勾线，清雅设色，东方人物肖像气质，服饰纹样与配饰细节清晰，画面克制雅致"
+	default:
+		return "写实风格，真实摄影质感，自然光影，人物皮肤与服饰纹理可信，细节清晰"
+	}
 }
 
 func (e *CharacterImageExecutor) generateLiveCharacterImages(

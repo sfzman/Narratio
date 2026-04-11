@@ -134,6 +134,47 @@ func TestCORSPreflight(t *testing.T) {
 	}
 }
 
+func TestListVoices(t *testing.T) {
+	router := NewRouter(nil, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/voices", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+
+	var response struct {
+		Code int `json:"code"`
+		Data struct {
+			DefaultVoiceID string `json:"default_voice_id"`
+			Voices         []struct {
+				ID             string `json:"id"`
+				Name           string `json:"name"`
+				ReferenceAudio string `json:"reference_audio"`
+				PreviewURL     string `json:"preview_url"`
+			} `json:"voices"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if response.Data.DefaultVoiceID != model.DefaultVoicePresetID {
+		t.Fatalf("default_voice_id = %q, want %q", response.Data.DefaultVoiceID, model.DefaultVoicePresetID)
+	}
+	if len(response.Data.Voices) != len(model.DefaultVoicePresets()) {
+		t.Fatalf("voices len = %d, want %d", len(response.Data.Voices), len(model.DefaultVoicePresets()))
+	}
+	if response.Data.Voices[0].ID == "" || response.Data.Voices[0].Name == "" {
+		t.Fatalf("first voice = %#v", response.Data.Voices[0])
+	}
+	if response.Data.Voices[0].ReferenceAudio == "" || response.Data.Voices[0].PreviewURL == "" {
+		t.Fatalf("first voice preview/reference = %#v", response.Data.Voices[0])
+	}
+}
+
 func TestCreateJob(t *testing.T) {
 	now := time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)
 	service := &fakeJobCreator{
@@ -148,7 +189,7 @@ func TestCreateJob(t *testing.T) {
 	body, err := json.Marshal(map[string]any{
 		"article": "hello world",
 		"options": map[string]any{
-			"voice_id":     "default",
+			"voice_id":     "male_calm",
 			"image_style":  "realistic",
 			"aspect_ratio": "16:9",
 			"video_count":  5,
@@ -170,7 +211,7 @@ func TestCreateJob(t *testing.T) {
 	if service.spec.Article != "hello world" {
 		t.Fatalf("article = %q", service.spec.Article)
 	}
-	if service.spec.Options.VoiceID != "default" {
+	if service.spec.Options.VoiceID != "male_calm" {
 		t.Fatalf("voice_id = %q", service.spec.Options.VoiceID)
 	}
 	if service.spec.Options.AspectRatio != model.AspectRatioLandscape16x9 {

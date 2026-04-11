@@ -190,9 +190,7 @@ func normalizeSpec(spec model.JobSpec) model.JobSpec {
 		string(spec.Options.AspectRatio),
 	).Normalized()
 
-	if spec.Options.VoiceID == "" {
-		spec.Options.VoiceID = "default"
-	}
+	spec.Options.VoiceID = model.NormalizeVoicePresetID(spec.Options.VoiceID)
 	if spec.Options.ImageStyle == "" {
 		spec.Options.ImageStyle = "realistic"
 	}
@@ -260,7 +258,9 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			model.TaskTypeCharacterImage,
 			model.ResourceImageGen,
 			[]string{"character_sheet"},
-			map[string]any{},
+			map[string]any{
+				"image_style": spec.Options.ImageStyle,
+			},
 			now,
 		),
 		newTask(

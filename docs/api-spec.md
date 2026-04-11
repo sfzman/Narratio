@@ -51,7 +51,7 @@
 {
   "article": "这是一篇文章内容...",
   "options": {
-    "voice_id": "default",
+    "voice_id": "male_calm",
     "image_style": "realistic",
     "aspect_ratio": "9:16",
     "video_count": 12
@@ -62,7 +62,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | article | string | ✅ | 文章内容，1~10000 字 |
-| options.voice_id | string | ❌ | TTS 音色 ID，默认 `default` |
+| options.voice_id | string | ❌ | TTS 音色 preset ID，默认 `male_calm` |
 | options.image_style | string | ❌ | 图像风格，默认 `realistic` |
 | options.aspect_ratio | string | ❌ | 画幅比例；当前只支持 `16:9`（横屏）和 `9:16`（竖屏），默认 `9:16` |
 | options.video_count | integer | ❌ | 只为按分镜顺序的前 `n` 个 shot 生成视频；默认 `12`，其余 shot 在 `shot_video` 中直接回退为静态图 |
@@ -286,9 +286,20 @@ Accept-Ranges: bytes
 {
   "code": 0,
   "data": {
+    "default_voice_id": "male_calm",
     "voices": [
-      { "id": "default", "name": "标准女声", "preview_url": "/..." },
-      { "id": "male_1", "name": "标准男声", "preview_url": "/..." }
+      {
+        "id": "male_calm",
+        "name": "男_沉稳青年音",
+        "reference_audio": "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%B2%89%E7%A8%B3%E9%9D%92%E5%B9%B4%E9%9F%B3.MP3",
+        "preview_url": "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%B2%89%E7%A8%B3%E9%9D%92%E5%B9%B4%E9%9F%B3.MP3"
+      },
+      {
+        "id": "male_strong",
+        "name": "男_王明军",
+        "reference_audio": "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E7%8E%8B%E6%98%8E%E5%86%9B.MP3",
+        "preview_url": "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E7%8E%8B%E6%98%8E%E5%86%9B.MP3"
+      }
     ]
   }
 }
@@ -321,12 +332,12 @@ Accept-Ranges: bytes
 当前已实现接口：
 
 - `POST /api/v1/jobs` 已实现
+- `GET /api/v1/voices` 已实现，返回内置 narration voice preset 列表
 - `GET /api/v1/jobs/:job_id` 已实现，返回 job 状态和 task 聚合统计
 - `GET /api/v1/jobs/:job_id/tasks` 已实现，返回 task 明细
 - `GET /api/v1/jobs/:job_id/download` 已实现，返回最终视频文件流并支持 Range
 - `DELETE /api/v1/jobs/:job_id` 已实现，支持最小取消语义
 - `POST /api/v1/jobs/:job_id/dispatch-once` 已实现，仅用于开发态手动推进 task
-- 音色列表接口尚未实现
 
 ---
 

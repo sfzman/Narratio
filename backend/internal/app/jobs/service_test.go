@@ -76,8 +76,8 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	if job.Status != model.JobStatusQueued {
 		t.Fatalf("CreateJob() status = %q, want %q", job.Status, model.JobStatusQueued)
 	}
-	if job.Spec.Options.VoiceID != "default" {
-		t.Fatalf("CreateJob() voice_id = %q, want %q", job.Spec.Options.VoiceID, "default")
+	if job.Spec.Options.VoiceID != model.DefaultVoicePresetID {
+		t.Fatalf("CreateJob() voice_id = %q, want %q", job.Spec.Options.VoiceID, model.DefaultVoicePresetID)
 	}
 	if job.Spec.Options.ImageStyle != "realistic" {
 		t.Fatalf("CreateJob() image_style = %q, want %q", job.Spec.Options.ImageStyle, "realistic")
@@ -103,6 +103,9 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	}
 	if len(tasks[4].DependsOn) != 1 || tasks[4].DependsOn[0] != "character_sheet" {
 		t.Fatalf("CreateJob() character_image depends_on = %#v, want [character_sheet]", tasks[4].DependsOn)
+	}
+	if tasks[4].Payload["image_style"] != "realistic" {
+		t.Fatalf("CreateJob() character_image payload style = %#v, want %#v", tasks[4].Payload["image_style"], "realistic")
 	}
 	if tasks[6].Payload["image_style"] != "realistic" {
 		t.Fatalf("CreateJob() image payload style = %#v, want %#v", tasks[6].Payload["image_style"], "realistic")
@@ -232,6 +235,29 @@ func TestCreateJobPreservesExplicitVideoCount(t *testing.T) {
 	}
 	if tasks[8].Payload["aspect_ratio"] != string(model.AspectRatioLandscape16x9) {
 		t.Fatalf("video payload aspect_ratio = %#v, want %q", tasks[8].Payload["aspect_ratio"], model.AspectRatioLandscape16x9)
+	}
+}
+
+func TestCreateJobPropagatesExplicitImageStyleToCharacterImage(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	service := NewService(store)
+
+	_, tasks, err := service.CreateJob(context.Background(), model.JobSpec{
+		Article: "hello world",
+		Options: model.RenderOptions{
+			ImageStyle: "现代工笔人物画风",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+	if tasks[4].Payload["image_style"] != "现代工笔人物画风" {
+		t.Fatalf("character_image payload image_style = %#v, want %q", tasks[4].Payload["image_style"], "现代工笔人物画风")
+	}
+	if tasks[6].Payload["image_style"] != "现代工笔人物画风" {
+		t.Fatalf("image payload image_style = %#v, want %q", tasks[6].Payload["image_style"], "现代工笔人物画风")
 	}
 }
 

@@ -86,6 +86,7 @@ func TestScriptRun(t *testing.T) {
 
 ### handler
 - [ ] POST /jobs 参数校验（article 为空、超长）
+- [x] GET /api/v1/voices 返回内置 narration voice preset 列表
 - [ ] GET /jobs/:id 任务不存在返回 1002
 - [x] GET /jobs/:id/download 任务未完成返回 1003
 - [x] DELETE /jobs/:id 对 queued 任务直接返回 cancelled

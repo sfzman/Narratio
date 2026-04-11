@@ -102,7 +102,7 @@ SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 当前代码状态：
 
 - `cmd/server` 目前已完成配置读取、SQLite store 初始化、`segmentation / outline / character_sheet / script / character_image / tts / image / shot_video / video` executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装
-- 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health`、`POST /api/v1/jobs`、`GET /api/v1/jobs/:job_id`、`GET /api/v1/jobs/:job_id/tasks` 与开发态 `POST /api/v1/jobs/:job_id/dispatch-once`
+- 已启动最小 Gin HTTP server，并开放 `GET /api/v1/health`、`GET /api/v1/voices`、`POST /api/v1/jobs`、`GET /api/v1/jobs/:job_id`、`GET /api/v1/jobs/:job_id/tasks` 与开发态 `POST /api/v1/jobs/:job_id/dispatch-once`
 - SQLite 模式会在启动时自动执行首个 migration，当前首版 schema 初始化是幂等的，可重复启动
 - 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
 - `segmentation / outline / character_sheet / script / tts / character_image / image / shot_video` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
@@ -223,7 +223,7 @@ curl -sS http://127.0.0.1:18080/api/v1/jobs \
   -d '{
     "article": "暴雨后的旧城巷口，林夏抱着一把黑伞站在路灯下，雨水沿着伞骨缓缓滴落。她想起和父亲失散前的最后一句叮嘱，于是深吸一口气，转身走进巷子尽头那家仍亮着暖黄灯光的小书店。",
     "options": {
-      "voice_id": "default",
+      "voice_id": "male_calm",
       "image_style": "realistic"
     }
   }'

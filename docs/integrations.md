@@ -85,7 +85,8 @@ payload := map[string]any{
 **注意事项**
 - TTS executor 消费的是 segmentation 的 `segments[*].text`
 - 每个 segment 会先按中文句号 `。` 切句，再一句一句调用 TTS 服务
-- `voice_id` 会先在后端映射到内置 narration voice preset；`default` 会回落到 `TTS_DEFAULT_VOICE_ID`
+- `voice_id` 会先在后端映射到内置 narration voice preset；当前内置 preset 为 `male_calm / male_strong / female_explainer / female_documentary / boy`
+- `voice_id` 为空或传 `default` 时，后端会统一规范化到 `TTS_DEFAULT_VOICE_ID`；当前默认值为 `male_calm`
 - `emotion_prompt` 当前由 `TTS_EMOTION_PROMPT` 配置统一注入
 - 句子级音频最终会被合并成 segment 级 WAV，并由 TTS 模块计算 segment 级字幕时间轴
 

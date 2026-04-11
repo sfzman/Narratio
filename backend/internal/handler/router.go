@@ -82,6 +82,7 @@ func NewRouter(
 
 	api := router.Group("/api/v1")
 	api.GET("/health", h.healthCheck)
+	api.GET("/voices", h.listVoices)
 	api.POST("/jobs", h.createJob)
 	api.GET("/jobs/:job_id", h.getJob)
 	api.GET("/jobs/:job_id/tasks", h.getJobTasks)
