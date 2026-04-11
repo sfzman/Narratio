@@ -51,6 +51,10 @@ func (e *Executor) Execute(
 	task model.Task,
 	dependencies map[string]model.Task,
 ) (model.Task, error) {
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "validating_dependencies",
+		Message: "正在校验音频与分镜视频产物",
+	})
 	ttsTask, ok := dependencies["tts"]
 	if !ok {
 		return task, fmt.Errorf("missing dependency %q", "tts")
@@ -109,6 +113,10 @@ func (e *Executor) Execute(
 	artifactPath := fmt.Sprintf("jobs/%s/output/final.mp4", job.PublicID)
 	fileSize := int64(defaultVideoFileSize)
 	if e.runner != nil && e.workspaceDir != "" {
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "rendering_video",
+			Message: "正在渲染最终视频",
+		})
 		fileSize, err = e.renderFinalVideo(
 			ctx,
 			artifactPath,
@@ -129,6 +137,10 @@ func (e *Executor) Execute(
 			return task, err
 		}
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "finalizing_output",
+		Message: "正在整理最终视频产物",
+	})
 	task.OutputRef = map[string]any{
 		"artifact_type":              "video",
 		"artifact_path":              artifactPath,
@@ -481,6 +493,10 @@ func (e *Executor) renderMergedAudio(
 	renderDir string,
 	tts ttsArtifact,
 ) (string, error) {
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "rendering_audio",
+		Message: "正在拼接旁白音频",
+	})
 	audioPaths := make([]string, 0, len(tts.AudioSegments))
 	for _, segment := range tts.AudioSegments {
 		audioPaths = append(
@@ -505,7 +521,14 @@ func (e *Executor) renderAdjustedSegments(
 ) ([]string, error) {
 	grouped := groupClipsBySegment(clips)
 	segmentPaths := make([]string, 0, len(tts.AudioSegments))
-	for _, audio := range tts.AudioSegments {
+	for index, audio := range tts.AudioSegments {
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "rendering_segment",
+			Message: fmt.Sprintf("正在渲染第 %d/%d 段视频", index+1, len(tts.AudioSegments)),
+			Current: index + 1,
+			Total:   len(tts.AudioSegments),
+			Unit:    "segment",
+		})
 		segmentClips := grouped[audio.SegmentIndex]
 		if len(segmentClips) == 0 {
 			return nil, fmt.Errorf("missing shot video clips for segment %d", audio.SegmentIndex)
@@ -740,6 +763,10 @@ func (e *Executor) renderConcatenatedVideo(
 	renderDir string,
 	segmentPaths []string,
 ) (string, error) {
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "concatenating_segments",
+		Message: "正在拼接分段视频",
+	})
 	outputPath := filepath.Join(renderDir, "concatenated.mp4")
 	if err := concatVideoClips(ctx, e.runner, outputPath, segmentPaths); err != nil {
 		return "", err
@@ -754,6 +781,10 @@ func (e *Executor) muxFinalVideo(
 	audioPath string,
 	outputPath string,
 ) error {
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "muxing_video",
+		Message: "正在合成最终视频与音频",
+	})
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir final video dir: %w", err)
 	}

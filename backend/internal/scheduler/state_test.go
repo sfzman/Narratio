@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -151,7 +152,7 @@ func TestMemoryResourceManager(t *testing.T) {
 	}
 }
 
-func TestDispatchNextReadyTaskExecutesOneTask(t *testing.T) {
+func TestDispatchNextReadyTaskExecutesReadyTasksWithinResourceLimit(t *testing.T) {
 	t.Parallel()
 
 	job := model.Job{ID: 1, PublicID: "job_1"}
@@ -210,6 +211,9 @@ func TestDispatchNextReadyTaskExecutesOneTask(t *testing.T) {
 	if result.ExecutedTaskKey != "outline" {
 		t.Fatalf("DispatchNextReadyTask() executed key = %q, want %q", result.ExecutedTaskKey, "outline")
 	}
+	if result.DispatchedTaskCount != 1 {
+		t.Fatalf("DispatchNextReadyTask() dispatched task count = %d, want 1", result.DispatchedTaskCount)
+	}
 	if len(executed) != 1 || executed[0] != "outline" {
 		t.Fatalf("executor calls = %#v, want %#v", executed, []string{"outline"})
 	}
@@ -221,6 +225,95 @@ func TestDispatchNextReadyTaskExecutesOneTask(t *testing.T) {
 	}
 	if result.Tasks[1].Status != model.TaskStatusReady {
 		t.Fatalf("script status = %q, want %q", result.Tasks[1].Status, model.TaskStatusReady)
+	}
+}
+
+func TestDispatchNextReadyTaskExecutesMultipleReadyTasks(t *testing.T) {
+	t.Parallel()
+
+	job := model.Job{ID: 9, PublicID: "job_9"}
+	tasks := []model.Task{
+		{
+			ID:          90,
+			Key:         "segmentation",
+			Type:        model.TaskTypeSegmentation,
+			Status:      model.TaskStatusReady,
+			ResourceKey: model.ResourceLocalCPU,
+		},
+		{
+			ID:          91,
+			Key:         "outline",
+			Type:        model.TaskTypeOutline,
+			Status:      model.TaskStatusReady,
+			ResourceKey: model.ResourceLLMText,
+		},
+		{
+			ID:          92,
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{"segmentation", "outline"},
+		},
+	}
+
+	executed := make([]string, 0, 2)
+	var mu sync.Mutex
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeSegmentation: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			mu.Lock()
+			executed = append(executed, task.Key)
+			mu.Unlock()
+			return task, nil
+		}),
+		model.TaskTypeOutline: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			mu.Lock()
+			executed = append(executed, task.Key)
+			mu.Unlock()
+			return task, nil
+		}),
+	})
+
+	manager := NewMemoryResourceManager(map[model.ResourceKey]int{
+		model.ResourceLocalCPU: 1,
+		model.ResourceLLMText:  1,
+	})
+
+	result, err := DispatchNextReadyTask(context.Background(), job, tasks, registry, manager)
+	if err != nil {
+		t.Fatalf("DispatchNextReadyTask() error = %v", err)
+	}
+
+	if !result.Dispatched {
+		t.Fatalf("DispatchNextReadyTask() dispatched = false, want true")
+	}
+	if result.DispatchedTaskCount != 2 {
+		t.Fatalf("DispatchNextReadyTask() dispatched task count = %d, want 2", result.DispatchedTaskCount)
+	}
+	if len(result.ExecutedTaskKeys) != 2 {
+		t.Fatalf("DispatchNextReadyTask() executed keys = %#v, want len 2", result.ExecutedTaskKeys)
+	}
+	if len(executed) != 2 {
+		t.Fatalf("executor calls = %#v, want 2 calls", executed)
+	}
+	if result.Tasks[0].Status != model.TaskStatusSucceeded {
+		t.Fatalf("segmentation status = %q, want %q", result.Tasks[0].Status, model.TaskStatusSucceeded)
+	}
+	if result.Tasks[1].Status != model.TaskStatusSucceeded {
+		t.Fatalf("outline status = %q, want %q", result.Tasks[1].Status, model.TaskStatusSucceeded)
+	}
+	if result.Tasks[2].Status != model.TaskStatusReady {
+		t.Fatalf("script status = %q, want %q", result.Tasks[2].Status, model.TaskStatusReady)
 	}
 }
 

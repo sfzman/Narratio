@@ -262,9 +262,18 @@ button:hover {
 .job-meta span,
 .task-state-grid span,
 .task-meta,
+.task-progress,
 .task-deps {
   color: #afab9f;
   font-size: 0.86rem;
+}
+
+.task-progress {
+  margin: 0;
+}
+
+.task-progress span {
+  color: #d7d1c3;
 }
 
 .health-card strong,

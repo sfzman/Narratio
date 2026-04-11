@@ -157,7 +157,7 @@ func LoadRuntime() (*Runtime, error) {
 		),
 		model.TaskTypeVideo: videopipeline.NewRealExecutor(cfg.WorkspaceDir),
 	})
-	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits())
+	resourceManager := scheduler.NewMemoryResourceManager(defaultResourceLimits(cfg))
 	schedulerService := scheduler.NewService(store, store, registry, resourceManager)
 	schedulerService.SetScriptTimeoutPerSegment(
 		time.Duration(cfg.ScriptTimeoutPerSegmentSeconds) * time.Second,
@@ -181,11 +181,18 @@ func LoadRuntime() (*Runtime, error) {
 			"dashscope_video": videoHealthStatus(cfg),
 			"tts":             healthStatus(cfg.TTSBaseURL != "" && cfg.TTSJWTPrivateKey != ""),
 		},
+		Resources: healthResourceLimits(cfg),
 	}, cfg.WorkspaceDir)
 
 	slog.Info("runtime initialized",
 		"database_driver", cfg.DatabaseDriver,
 		"database_dsn", cfg.DatabaseDSN,
+		"resource_local_cpu_concurrency", cfg.ResourceLocalCPUConcurrency,
+		"resource_llm_text_concurrency", cfg.ResourceLLMTextConcurrency,
+		"resource_tts_concurrency", cfg.ResourceTTSConcurrency,
+		"resource_image_gen_concurrency", cfg.ResourceImageGenConcurrency,
+		"resource_video_gen_concurrency", cfg.ResourceVideoGenConcurrency,
+		"resource_video_render_concurrency", cfg.ResourceVideoRenderConcurrency,
 		"script_timeout_per_segment_seconds", cfg.ScriptTimeoutPerSegmentSeconds,
 		"shot_video_timeout_per_shot_seconds", cfg.ShotVideoTimeoutPerShotSeconds,
 		"video_render_timeout_seconds", cfg.VideoRenderTimeoutSeconds,
@@ -196,6 +203,9 @@ func LoadRuntime() (*Runtime, error) {
 		"live_video_generation", cfg.EnableLiveVideoGeneration,
 		"dashscope_text_base_url", cfg.DashScopeTextBaseURL,
 		"dashscope_text_model", cfg.DashScopeTextModel,
+		"dashscope_text_request_timeout_seconds", cfg.DashScopeTextRequestTimeoutSeconds,
+		"dashscope_text_max_retries", cfg.DashScopeTextMaxRetries,
+		"dashscope_text_retry_backoff_seconds", cfg.DashScopeTextRetryBackoffSeconds,
 		"dashscope_image_base_url", cfg.DashScopeImageBaseURL,
 		"dashscope_image_model", cfg.DashScopeImageModel,
 		"dashscope_video_base_url", cfg.DashScopeVideoBaseURL,
@@ -285,14 +295,37 @@ func loadInitialMigration() (string, error) {
 	return string(sqlBytes), nil
 }
 
-func defaultResourceLimits() map[model.ResourceKey]int {
+func defaultResourceLimits(cfg *config.Config) map[model.ResourceKey]int {
+	if cfg == nil {
+		return map[model.ResourceKey]int{
+			model.ResourceLocalCPU:    4,
+			model.ResourceLLMText:     2,
+			model.ResourceTTS:         3,
+			model.ResourceImageGen:    2,
+			model.ResourceVideoGen:    1,
+			model.ResourceVideoRender: 1,
+		}
+	}
+
 	return map[model.ResourceKey]int{
-		model.ResourceLocalCPU:    4,
-		model.ResourceLLMText:     2,
-		model.ResourceTTS:         3,
-		model.ResourceImageGen:    2,
-		model.ResourceVideoGen:    1,
-		model.ResourceVideoRender: 1,
+		model.ResourceLocalCPU:    cfg.ResourceLocalCPUConcurrency,
+		model.ResourceLLMText:     cfg.ResourceLLMTextConcurrency,
+		model.ResourceTTS:         cfg.ResourceTTSConcurrency,
+		model.ResourceImageGen:    cfg.ResourceImageGenConcurrency,
+		model.ResourceVideoGen:    cfg.ResourceVideoGenConcurrency,
+		model.ResourceVideoRender: cfg.ResourceVideoRenderConcurrency,
+	}
+}
+
+func healthResourceLimits(cfg *config.Config) map[string]int {
+	limits := defaultResourceLimits(cfg)
+	return map[string]int{
+		string(model.ResourceLocalCPU):    limits[model.ResourceLocalCPU],
+		string(model.ResourceLLMText):     limits[model.ResourceLLMText],
+		string(model.ResourceTTS):         limits[model.ResourceTTS],
+		string(model.ResourceImageGen):    limits[model.ResourceImageGen],
+		string(model.ResourceVideoGen):    limits[model.ResourceVideoGen],
+		string(model.ResourceVideoRender): limits[model.ResourceVideoRender],
 	}
 }
 
@@ -348,7 +381,11 @@ func buildTextClient(cfg *config.Config) (scriptpipeline.TextClient, error) {
 	client, err := scriptpipeline.NewHTTPTextClient(
 		cfg.DashScopeTextBaseURL,
 		cfg.DashScopeTextAPIKey,
-		&http.Client{Timeout: 600 * time.Second},
+		&http.Client{Timeout: time.Duration(cfg.DashScopeTextRequestTimeoutSeconds) * time.Second},
+		scriptpipeline.HTTPTextClientOptions{
+			MaxRetries: cfg.DashScopeTextMaxRetries,
+			Backoff:    time.Duration(cfg.DashScopeTextRetryBackoffSeconds) * time.Second,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build dashscope text client: %w", err)

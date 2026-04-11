@@ -82,6 +82,10 @@ func (e *ScriptExecutor) Execute(
 		e.logGenerationError("script text generation failed", job, task, err)
 		return task, err
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "writing_artifact",
+		Message: "正在汇总并写入分镜产物",
+	})
 	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
 		return task, fmt.Errorf("write script artifact: %w", err)
 	}
@@ -192,6 +196,13 @@ func (e *ScriptExecutor) generateSegmentOutputs(
 	previews := make([]string, 0, len(segmentation.Segments))
 
 	for _, segment := range segmentation.Segments {
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "generating_segment",
+			Message: fmt.Sprintf("正在生成第 %d/%d 段分镜", segment.Index+1, len(segmentation.Segments)),
+			Current: segment.Index + 1,
+			Total:   len(segmentation.Segments),
+			Unit:    "segment",
+		})
 		segmentOutput, response, preview, reused, err := e.loadOrGenerateSegmentOutput(
 			ctx,
 			jobPublicID,

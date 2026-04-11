@@ -121,7 +121,7 @@ func (e *Executor) generateAndPersistOutput(
 	artifactPath string,
 ) (TTSOutput, string, error) {
 	if e == nil || e.client == nil {
-		output, err := e.generatePlaceholderOutput(jobPublicID, segmentation, artifactPath)
+		output, err := e.generatePlaceholderOutput(ctx, jobPublicID, segmentation, artifactPath)
 		if err != nil {
 			return TTSOutput{}, "", err
 		}
@@ -137,14 +137,22 @@ func (e *Executor) generateAndPersistOutput(
 }
 
 func (e *Executor) generatePlaceholderOutput(
+	ctx context.Context,
 	jobPublicID string,
 	segmentation segmentationArtifact,
 	artifactPath string,
 ) (TTSOutput, error) {
 	output := TTSOutput{}
-
-	for index, segment := range normalizedSegmentationSegments(segmentation) {
+	segments := normalizedSegmentationSegments(segmentation)
+	for index, segment := range segments {
 		segmentIndex := normalizedSegmentIndex(segment.Index, index)
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "generating_segment",
+			Message: fmt.Sprintf("正在生成第 %d/%d 段音频", index+1, len(segments)),
+			Current: index + 1,
+			Total:   len(segments),
+			Unit:    "segment",
+		})
 		filePath := audioSegmentPath(jobPublicID, segmentIndex)
 		audioBytes, err := buildSilentWAV(defaultSegmentDuration)
 		if err != nil {
@@ -174,9 +182,16 @@ func (e *Executor) generateLiveOutput(
 	artifactPath string,
 ) (TTSOutput, error) {
 	output := TTSOutput{}
-
-	for index, segment := range normalizedSegmentationSegments(segmentation) {
+	segments := normalizedSegmentationSegments(segmentation)
+	for index, segment := range segments {
 		segmentIndex := normalizedSegmentIndex(segment.Index, index)
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "generating_segment",
+			Message: fmt.Sprintf("正在生成第 %d/%d 段音频", index+1, len(segments)),
+			Current: index + 1,
+			Total:   len(segments),
+			Unit:    "segment",
+		})
 		filePath := audioSegmentPath(jobPublicID, segmentIndex)
 		audioBytes, duration, sentenceCount, err := e.synthesizeSegment(
 			ctx,
@@ -196,6 +211,13 @@ func (e *Executor) generateLiveOutput(
 			"sentence_count", sentenceCount,
 			"duration_seconds", duration,
 		)
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "writing_segment_artifact",
+			Message: fmt.Sprintf("正在写入第 %d/%d 段音频", index+1, len(segments)),
+			Current: index + 1,
+			Total:   len(segments),
+			Unit:    "segment",
+		})
 
 		if err := e.persistSegmentOutput(
 			artifactPath,

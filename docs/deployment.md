@@ -67,6 +67,9 @@ ENABLE_LIVE_VIDEO_GENERATION=false
 DASHSCOPE_TEXT_API_KEY=your-dashscope-text-key-here
 DASHSCOPE_TEXT_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
 DASHSCOPE_TEXT_MODEL=qwen-max
+DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS=600
+DASHSCOPE_TEXT_MAX_RETRIES=2
+DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS=2
 
 DASHSCOPE_IMAGE_API_KEY=your-dashscope-image-key-here
 DASHSCOPE_IMAGE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
@@ -92,6 +95,12 @@ TTS_DEFAULT_VOICE_ID=male_calm
 TTS_EMOTION_PROMPT=https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/male-read-emo.wav
 
 WORKSPACE_DIR=./workspace
+RESOURCE_LOCAL_CPU_CONCURRENCY=4
+RESOURCE_LLM_TEXT_CONCURRENCY=2
+RESOURCE_TTS_CONCURRENCY=3
+RESOURCE_IMAGE_GEN_CONCURRENCY=2
+RESOURCE_VIDEO_GEN_CONCURRENCY=1
+RESOURCE_VIDEO_RENDER_CONCURRENCY=1
 SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS=200
 SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS=200
 VIDEO_RENDER_TIMEOUT_SECONDS=1800
@@ -107,12 +116,15 @@ SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 - 当前已接入最小后台 scheduler runner，`POST /jobs` 后会自动持续推进 job
 - `segmentation / outline / character_sheet / script / tts / character_image / image / shot_video` 成功后会把结构化结果写入 `WORKSPACE_DIR/jobs/{job_id}/...`
 - `video` 在 runtime 中已切到真实 FFmpeg 渲染路径；成功后会把最终成片写到 `WORKSPACE_DIR/jobs/{job_id}/output/final.mp4`
+- 资源池并发上限当前已支持通过环境变量配置：`RESOURCE_LOCAL_CPU_CONCURRENCY`、`RESOURCE_LLM_TEXT_CONCURRENCY`、`RESOURCE_TTS_CONCURRENCY`、`RESOURCE_IMAGE_GEN_CONCURRENCY`、`RESOURCE_VIDEO_GEN_CONCURRENCY`、`RESOURCE_VIDEO_RENDER_CONCURRENCY`
 - 服务启动时会先执行一次 FFmpeg 启动检查；若本机 `ffmpeg` 不可用，runtime 会直接启动失败
 - `image` / `character_image` 已支持注入真实 DashScope client；只有显式打开 `ENABLE_LIVE_IMAGE_GENERATION=true` 且配置了 `DASHSCOPE_IMAGE_API_KEY` 时，才会尝试真实图片请求
 
 注意：
 
 - 当前默认是 skeleton 模式，`ENABLE_LIVE_TEXT_GENERATION=false`
+- `DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS` 用来控制 DashScope 文本 HTTP client timeout，默认 `600` 秒；若日志里出现 `Client.Timeout exceeded while awaiting headers`，优先检查这里
+- `DASHSCOPE_TEXT_MAX_RETRIES` / `DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS` 用来控制文本请求最小 retry/backoff；默认按 `429`、`5xx`、timeout 重试 2 次，退避 2s / 4s
 - 图片默认也仍是 skeleton 模式，`ENABLE_LIVE_IMAGE_GENERATION=false`
 - `shot_video` 当前已支持真实图生视频；但默认仍受 `ENABLE_LIVE_VIDEO_GENERATION=false` 保护，关闭时会稳定回退到 `image_fallback`
 - `SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS` 用来控制 `shot_video` task 的整体 execution deadline 预算；当前会按“前 `video_count` 个真正参与图生视频的 shot 数量 * 每 shot 超时”动态计算，默认 `200` 秒/shot
@@ -120,6 +132,7 @@ SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 - `VIDEO_RENDER_TIMEOUT_SECONDS` 用来控制 `video` task 的执行超时，默认 `1800` 秒
 - `FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS` 用来控制服务启动时 `ffmpeg -version` 检查超时，默认 `10` 秒
 - 当前代码已支持按 `ENABLE_LIVE_VIDEO_GENERATION=true` 条件组装真实 DashScope 视频 client；即使该开关关闭，`video` 仍会基于 fallback 图 + TTS 真实合成最终 MP4
+- 默认资源池并发上限分别为：`local_cpu=4`、`llm_text=2`、`tts=3`、`image_gen=2`、`video_gen=1`、`video_render=1`
 - 即使配置了 `DASHSCOPE_TEXT_API_KEY`，只要不显式打开该开关，`outline / character_sheet / script` 也不会调用真实 DashScope 文本接口；`segmentation` 始终走本地 deterministic 路径
 - 即使配置了 `DASHSCOPE_IMAGE_API_KEY`，只要不显式打开该开关，`image` / `character_image` 也不会调用真实 DashScope 图像接口
 - 即使已经配置了 `DASHSCOPE_VIDEO_*` 这组参数，若不显式打开 `ENABLE_LIVE_VIDEO_GENERATION=true`，当前版本也不会启用真实图生视频
@@ -216,6 +229,8 @@ curl -sS http://127.0.0.1:18080/api/v1/health
 ```
 
 若返回里包含 `dashscope_image: configured`，说明服务已读取到图像配置，接下来可提交一个最小 job：
+
+同时还可以直接核对返回里的 `resources` 字段，确认当前服务实际采用的资源池并发上限是否符合你的 `.env` 配置。
 
 ```bash
 curl -sS http://127.0.0.1:18080/api/v1/jobs \

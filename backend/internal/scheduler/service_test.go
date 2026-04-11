@@ -130,11 +130,14 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	if firstResult.ExecutedTaskKey != "segmentation" {
 		t.Fatalf("first DispatchOnce() executed = %q, want %q", firstResult.ExecutedTaskKey, "segmentation")
 	}
+	if firstResult.DispatchedTaskCount != 2 {
+		t.Fatalf("first DispatchOnce() dispatched task count = %d, want 2", firstResult.DispatchedTaskCount)
+	}
 	if firstJob.Status != model.JobStatusQueued {
 		t.Fatalf("first DispatchOnce() job status = %q, want %q", firstJob.Status, model.JobStatusQueued)
 	}
-	if firstJob.Progress != 25 {
-		t.Fatalf("first DispatchOnce() progress = %d, want 25", firstJob.Progress)
+	if firstJob.Progress != 50 {
+		t.Fatalf("first DispatchOnce() progress = %d, want 50", firstJob.Progress)
 	}
 
 	persistedAfterFirst, err := store.ListTasksByJob(context.Background(), job.ID)
@@ -150,8 +153,14 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	if persistedAfterFirst[0].Attempt != 1 {
 		t.Fatalf("segmentation attempt after first dispatch = %d, want 1", persistedAfterFirst[0].Attempt)
 	}
-	if persistedAfterFirst[1].Status != model.TaskStatusReady {
-		t.Fatalf("outline status after first dispatch = %q, want %q", persistedAfterFirst[1].Status, model.TaskStatusReady)
+	if persistedAfterFirst[1].Status != model.TaskStatusSucceeded {
+		t.Fatalf("outline status after first dispatch = %q, want %q", persistedAfterFirst[1].Status, model.TaskStatusSucceeded)
+	}
+	if persistedAfterFirst[1].OutputRef["artifact_type"] != "outline" {
+		t.Fatalf("outline output_ref after first dispatch = %#v, want artifact_type=outline", persistedAfterFirst[1].OutputRef)
+	}
+	if persistedAfterFirst[1].Attempt != 1 {
+		t.Fatalf("outline attempt after first dispatch = %d, want 1", persistedAfterFirst[1].Attempt)
 	}
 	if persistedAfterFirst[2].Status != model.TaskStatusReady {
 		t.Fatalf("character_sheet status after first dispatch = %q, want %q", persistedAfterFirst[2].Status, model.TaskStatusReady)
@@ -168,14 +177,14 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	if !secondResult.Dispatched {
 		t.Fatalf("second DispatchOnce() dispatched = false, want true")
 	}
-	if secondResult.ExecutedTaskKey != "outline" {
-		t.Fatalf("second DispatchOnce() executed = %q, want %q", secondResult.ExecutedTaskKey, "outline")
+	if secondResult.ExecutedTaskKey != "character_sheet" {
+		t.Fatalf("second DispatchOnce() executed = %q, want %q", secondResult.ExecutedTaskKey, "character_sheet")
 	}
 	if secondJob.Status != model.JobStatusQueued {
 		t.Fatalf("second DispatchOnce() job status = %q, want %q", secondJob.Status, model.JobStatusQueued)
 	}
-	if secondJob.Progress != 50 {
-		t.Fatalf("second DispatchOnce() progress = %d, want 50", secondJob.Progress)
+	if secondJob.Progress != 75 {
+		t.Fatalf("second DispatchOnce() progress = %d, want 75", secondJob.Progress)
 	}
 
 	persistedAfterSecond, err := store.ListTasksByJob(context.Background(), job.ID)
@@ -185,20 +194,17 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	if len(persistedAfterSecond) != len(createdTasks) {
 		t.Fatalf("persisted task len = %d, want %d", len(persistedAfterSecond), len(createdTasks))
 	}
-	if persistedAfterSecond[1].Status != model.TaskStatusSucceeded {
-		t.Fatalf("outline status after second dispatch = %q, want %q", persistedAfterSecond[1].Status, model.TaskStatusSucceeded)
+	if persistedAfterSecond[2].Status != model.TaskStatusSucceeded {
+		t.Fatalf("character_sheet status after second dispatch = %q, want %q", persistedAfterSecond[2].Status, model.TaskStatusSucceeded)
 	}
-	if persistedAfterSecond[1].OutputRef["artifact_type"] != "outline" {
-		t.Fatalf("outline output_ref after second dispatch = %#v, want artifact_type=outline", persistedAfterSecond[1].OutputRef)
+	if persistedAfterSecond[2].OutputRef["artifact_type"] != "character_sheet" {
+		t.Fatalf("character_sheet output_ref after second dispatch = %#v, want artifact_type=character_sheet", persistedAfterSecond[2].OutputRef)
 	}
-	if persistedAfterSecond[1].Attempt != 1 {
-		t.Fatalf("outline attempt after second dispatch = %d, want 1", persistedAfterSecond[1].Attempt)
+	if persistedAfterSecond[2].Attempt != 1 {
+		t.Fatalf("character_sheet attempt after second dispatch = %d, want 1", persistedAfterSecond[2].Attempt)
 	}
-	if persistedAfterSecond[2].Status != model.TaskStatusReady {
-		t.Fatalf("character_sheet status after second dispatch = %q, want %q", persistedAfterSecond[2].Status, model.TaskStatusReady)
-	}
-	if persistedAfterSecond[3].Status != model.TaskStatusPending {
-		t.Fatalf("script status after second dispatch = %q, want %q", persistedAfterSecond[3].Status, model.TaskStatusPending)
+	if persistedAfterSecond[3].Status != model.TaskStatusReady {
+		t.Fatalf("script status after second dispatch = %q, want %q", persistedAfterSecond[3].Status, model.TaskStatusReady)
 	}
 
 	service.clock = fixedSchedulerClock{now: now.Add(3 * time.Minute)}
@@ -209,69 +215,37 @@ func TestDispatchOncePersistsTaskAndJobState(t *testing.T) {
 	if !thirdResult.Dispatched {
 		t.Fatalf("third DispatchOnce() dispatched = false, want true")
 	}
-	if thirdResult.ExecutedTaskKey != "character_sheet" {
-		t.Fatalf("third DispatchOnce() executed = %q, want %q", thirdResult.ExecutedTaskKey, "character_sheet")
+	if thirdResult.ExecutedTaskKey != "script" {
+		t.Fatalf("third DispatchOnce() executed = %q, want %q", thirdResult.ExecutedTaskKey, "script")
 	}
-	if thirdJob.Status != model.JobStatusQueued {
-		t.Fatalf("third DispatchOnce() job status = %q, want %q", thirdJob.Status, model.JobStatusQueued)
+	if thirdJob.Status != model.JobStatusCompleted {
+		t.Fatalf("third DispatchOnce() job status = %q, want %q", thirdJob.Status, model.JobStatusCompleted)
 	}
-	if thirdJob.Progress != 75 {
-		t.Fatalf("third DispatchOnce() progress = %d, want 75", thirdJob.Progress)
+	if thirdJob.Progress != 100 {
+		t.Fatalf("third DispatchOnce() progress = %d, want 100", thirdJob.Progress)
 	}
 
 	persistedAfterThird, err := store.ListTasksByJob(context.Background(), job.ID)
 	if err != nil {
 		t.Fatalf("ListTasksByJob() after third dispatch error = %v", err)
 	}
-	if persistedAfterThird[2].Status != model.TaskStatusSucceeded {
-		t.Fatalf("character_sheet status after third dispatch = %q, want %q", persistedAfterThird[2].Status, model.TaskStatusSucceeded)
+	if persistedAfterThird[3].Status != model.TaskStatusSucceeded {
+		t.Fatalf("script status after third dispatch = %q, want %q", persistedAfterThird[3].Status, model.TaskStatusSucceeded)
 	}
-	if persistedAfterThird[2].OutputRef["artifact_type"] != "character_sheet" {
-		t.Fatalf("character_sheet output_ref after third dispatch = %#v, want artifact_type=character_sheet", persistedAfterThird[2].OutputRef)
+	if persistedAfterThird[3].OutputRef["artifact_type"] != "script" {
+		t.Fatalf("script output_ref after third dispatch = %#v, want artifact_type=script", persistedAfterThird[3].OutputRef)
 	}
-	if persistedAfterThird[2].Attempt != 1 {
-		t.Fatalf("character_sheet attempt after third dispatch = %d, want 1", persistedAfterThird[2].Attempt)
+	if persistedAfterThird[3].OutputRef["segmentation_ref"] != "jobs/job_public_scheduler_1/segments.json" {
+		t.Fatalf("script segmentation ref after third dispatch = %#v", persistedAfterThird[3].OutputRef["segmentation_ref"])
 	}
-
-	service.clock = fixedSchedulerClock{now: now.Add(4 * time.Minute)}
-	fourthResult, fourthJob, err := service.DispatchOnce(context.Background(), job.ID)
-	if err != nil {
-		t.Fatalf("fourth DispatchOnce() error = %v", err)
+	if persistedAfterThird[3].OutputRef["outline_artifact_ref"] != "jobs/job_public_scheduler_1/outline.json" {
+		t.Fatalf("script outline ref after third dispatch = %#v", persistedAfterThird[3].OutputRef["outline_artifact_ref"])
 	}
-	if !fourthResult.Dispatched {
-		t.Fatalf("fourth DispatchOnce() dispatched = false, want true")
+	if persistedAfterThird[3].OutputRef["character_ref"] != "jobs/job_public_scheduler_1/character_sheet.json" {
+		t.Fatalf("script character ref after third dispatch = %#v", persistedAfterThird[3].OutputRef["character_ref"])
 	}
-	if fourthResult.ExecutedTaskKey != "script" {
-		t.Fatalf("fourth DispatchOnce() executed = %q, want %q", fourthResult.ExecutedTaskKey, "script")
-	}
-	if fourthJob.Status != model.JobStatusCompleted {
-		t.Fatalf("fourth DispatchOnce() job status = %q, want %q", fourthJob.Status, model.JobStatusCompleted)
-	}
-	if fourthJob.Progress != 100 {
-		t.Fatalf("fourth DispatchOnce() progress = %d, want 100", fourthJob.Progress)
-	}
-
-	persistedAfterFourth, err := store.ListTasksByJob(context.Background(), job.ID)
-	if err != nil {
-		t.Fatalf("ListTasksByJob() after fourth dispatch error = %v", err)
-	}
-	if persistedAfterFourth[3].Status != model.TaskStatusSucceeded {
-		t.Fatalf("script status after fourth dispatch = %q, want %q", persistedAfterFourth[3].Status, model.TaskStatusSucceeded)
-	}
-	if persistedAfterFourth[3].OutputRef["artifact_type"] != "script" {
-		t.Fatalf("script output_ref after fourth dispatch = %#v, want artifact_type=script", persistedAfterFourth[3].OutputRef)
-	}
-	if persistedAfterFourth[3].OutputRef["segmentation_ref"] != "jobs/job_public_scheduler_1/segments.json" {
-		t.Fatalf("script segmentation ref after fourth dispatch = %#v", persistedAfterFourth[3].OutputRef["segmentation_ref"])
-	}
-	if persistedAfterFourth[3].OutputRef["outline_artifact_ref"] != "jobs/job_public_scheduler_1/outline.json" {
-		t.Fatalf("script outline ref after fourth dispatch = %#v", persistedAfterFourth[3].OutputRef["outline_artifact_ref"])
-	}
-	if persistedAfterFourth[3].OutputRef["character_ref"] != "jobs/job_public_scheduler_1/character_sheet.json" {
-		t.Fatalf("script character ref after fourth dispatch = %#v", persistedAfterFourth[3].OutputRef["character_ref"])
-	}
-	if persistedAfterFourth[3].Attempt != 1 {
-		t.Fatalf("script attempt after fourth dispatch = %d, want 1", persistedAfterFourth[3].Attempt)
+	if persistedAfterThird[3].Attempt != 1 {
+		t.Fatalf("script attempt after third dispatch = %d, want 1", persistedAfterThird[3].Attempt)
 	}
 }
 
@@ -477,6 +451,340 @@ func TestDispatchOncePromotesTTSReadyImmediatelyAfterSegmentationSucceeds(t *tes
 	}
 	if persistedTasks[1].Status != model.TaskStatusReady {
 		t.Fatalf("tts status = %q, want %q", persistedTasks[1].Status, model.TaskStatusReady)
+	}
+}
+
+func TestDispatchOncePersistsRunningStateBeforeExecutionCompletes(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 11, 15, 0, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_running_state",
+		Token:     "job_token_scheduler_running_state",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "outline",
+			Type:        model.TaskTypeOutline,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload: map[string]any{
+				"article": "story",
+			},
+			OutputRef: map[string]any{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeOutline: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			started <- struct{}{}
+			<-release
+			task.OutputRef = map[string]any{"artifact_type": "outline"}
+			return task, nil
+		}),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceLLMText: 1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	resultCh := make(chan struct {
+		result DispatchResult
+		job    model.Job
+		err    error
+	}, 1)
+	go func() {
+		result, updatedJob, err := service.DispatchOnce(context.Background(), job.ID)
+		resultCh <- struct {
+			result DispatchResult
+			job    model.Job
+			err    error
+		}{result: result, job: updatedJob, err: err}
+	}()
+
+	<-started
+
+	persistedJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob() during execution error = %v", err)
+	}
+	if persistedJob.Status != model.JobStatusRunning {
+		t.Fatalf("job status during execution = %q, want %q", persistedJob.Status, model.JobStatusRunning)
+	}
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() during execution error = %v", err)
+	}
+	if len(persistedTasks) != 1 {
+		t.Fatalf("task len during execution = %d, want 1", len(persistedTasks))
+	}
+	if persistedTasks[0].Status != model.TaskStatusRunning {
+		t.Fatalf("task status during execution = %q, want %q", persistedTasks[0].Status, model.TaskStatusRunning)
+	}
+	if persistedTasks[0].Attempt != 1 {
+		t.Fatalf("task attempt during execution = %d, want 1", persistedTasks[0].Attempt)
+	}
+
+	close(release)
+	outcome := <-resultCh
+	if outcome.err != nil {
+		t.Fatalf("DispatchOnce() error = %v", outcome.err)
+	}
+	if !outcome.result.Dispatched {
+		t.Fatal("DispatchOnce() dispatched = false, want true")
+	}
+	if outcome.job.Status != model.JobStatusCompleted {
+		t.Fatalf("final job status = %q, want %q", outcome.job.Status, model.JobStatusCompleted)
+	}
+}
+
+func TestDispatchOncePersistsReportedTaskProgressWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 11, 16, 0, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_task_progress",
+		Token:     "job_token_scheduler_task_progress",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "outline",
+			Type:        model.TaskTypeOutline,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{"article": "story"},
+			OutputRef:   map[string]any{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	progressReported := make(chan struct{}, 1)
+	release := make(chan struct{})
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeOutline: executorFunc(func(
+			ctx context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			if err := model.ReportTaskProgress(ctx, model.TaskProgress{
+				Phase:   "requesting_text",
+				Message: "正在请求大纲生成",
+				Current: 1,
+				Total:   1,
+				Unit:    "step",
+			}); err != nil {
+				t.Fatalf("ReportTaskProgress() error = %v", err)
+			}
+			progressReported <- struct{}{}
+			<-release
+			task.OutputRef = map[string]any{"artifact_type": "outline"}
+			return task, nil
+		}),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceLLMText: 1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := service.DispatchOnce(context.Background(), job.ID)
+		errCh <- err
+	}()
+
+	<-progressReported
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if len(persistedTasks) != 1 {
+		t.Fatalf("task len = %d, want 1", len(persistedTasks))
+	}
+	persistedTask := persistedTasks[0]
+	progress, ok := persistedTask.OutputRef["progress"].(map[string]any)
+	if !ok {
+		t.Fatalf("progress = %#v, want map", persistedTask.OutputRef["progress"])
+	}
+	if progress["phase"] != "requesting_text" {
+		t.Fatalf("progress phase = %#v, want requesting_text", progress["phase"])
+	}
+	if progress["message"] != "正在请求大纲生成" {
+		t.Fatalf("progress message = %#v", progress["message"])
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
+	}
+
+	finalTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() after completion error = %v", err)
+	}
+	if _, ok := finalTasks[0].OutputRef["progress"]; ok {
+		t.Fatalf("completed task progress = %#v, want cleared", finalTasks[0].OutputRef["progress"])
+	}
+}
+
+func TestDispatchOncePersistsFastTaskCompletionWhileSlowTaskStillRunning(t *testing.T) {
+	t.Parallel()
+
+	store := newSchedulerTestStore(t)
+	now := time.Date(2026, 4, 11, 15, 30, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_public_scheduler_incremental_completion",
+		Token:     "job_token_scheduler_incremental_completion",
+		Status:    model.JobStatusQueued,
+		Progress:  0,
+		Spec:      model.JobSpec{Article: "story"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := store.InitializeJob(context.Background(), &job, []model.Task{
+		{
+			Key:         "segmentation",
+			Type:        model.TaskTypeSegmentation,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLocalCPU,
+			DependsOn:   []string{},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{"article": "story"},
+			OutputRef:   map[string]any{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			Key:         "outline",
+			Type:        model.TaskTypeOutline,
+			Status:      model.TaskStatusPending,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{"article": "story"},
+			OutputRef:   map[string]any{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("InitializeJob() error = %v", err)
+	}
+
+	segmentationDone := make(chan struct{}, 1)
+	releaseOutline := make(chan struct{})
+	registry := NewExecutorRegistry(map[model.TaskType]Executor{
+		model.TaskTypeSegmentation: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			task.OutputRef = map[string]any{"artifact_type": "segmentation"}
+			segmentationDone <- struct{}{}
+			return task, nil
+		}),
+		model.TaskTypeOutline: executorFunc(func(
+			_ context.Context,
+			_ model.Job,
+			task model.Task,
+			_ map[string]model.Task,
+		) (model.Task, error) {
+			<-releaseOutline
+			task.OutputRef = map[string]any{"artifact_type": "outline"}
+			return task, nil
+		}),
+	})
+
+	service := NewService(
+		store,
+		store,
+		registry,
+		NewMemoryResourceManager(map[model.ResourceKey]int{
+			model.ResourceLocalCPU: 1,
+			model.ResourceLLMText:  1,
+		}),
+	)
+	service.clock = fixedSchedulerClock{now: now.Add(time.Minute)}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, _, err := service.DispatchOnce(context.Background(), job.ID)
+		resultCh <- err
+	}()
+
+	<-segmentationDone
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if persistedTasks[0].Status != model.TaskStatusSucceeded {
+		t.Fatalf("segmentation status during outline run = %q, want %q", persistedTasks[0].Status, model.TaskStatusSucceeded)
+	}
+	if persistedTasks[1].Status != model.TaskStatusRunning {
+		t.Fatalf("outline status during outline run = %q, want %q", persistedTasks[1].Status, model.TaskStatusRunning)
+	}
+
+	close(releaseOutline)
+	if err := <-resultCh; err != nil {
+		t.Fatalf("DispatchOnce() error = %v", err)
 	}
 }
 
@@ -1016,6 +1324,7 @@ func newSchedulerTestStore(t *testing.T) *sqlstore.Store {
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 
 	if err := applySchedulerTestMigration(db); err != nil {

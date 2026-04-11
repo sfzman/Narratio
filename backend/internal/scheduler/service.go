@@ -91,54 +91,54 @@ func (s *Service) DispatchOnce(
 		return DispatchResult{}, model.Job{}, err
 	}
 
-	result, err := DispatchNextReadyTaskWithTimeouts(
+	selected, updatedTasks, err := s.prepareDispatch(ctx, job, tasks)
+	if err != nil {
+		s.log.Error("prepare dispatch failed",
+			"job_id", jobID,
+			"job_public_id", job.PublicID,
+			"error", err,
+		)
+		return DispatchResult{}, model.Job{}, err
+	}
+	if err := s.persistDispatchStage(&job, tasks, updatedTasks); err != nil {
+		releaseSelectedResources(selected, s.resources)
+		s.log.Error("persist pre-execution state failed",
+			"job_id", jobID,
+			"job_public_id", job.PublicID,
+			"error", err,
+		)
+		return DispatchResult{}, model.Job{}, err
+	}
+	if len(selected) == 0 {
+		result := DispatchResult{Tasks: updatedTasks}
+		s.logNoDispatch(result, job)
+		return result, job, nil
+	}
+
+	result, finalTasks, err := s.executePreparedDispatch(
 		ctx,
-		job,
-		tasks,
-		s.registry,
-		s.resources,
-		s.scriptTimeoutPerSegment,
-		s.shotVideoTimeoutPerShot,
-		s.videoRenderTimeout,
+		&job,
+		updatedTasks,
+		selected,
 	)
 	if err != nil {
-		s.log.Error("dispatch next ready task failed",
-			"job_id", jobID,
-			"job_public_id", job.PublicID,
-			"error", err,
-		)
 		return DispatchResult{}, model.Job{}, err
 	}
-
-	now := s.clock.Now()
-	result.Tasks = applyTaskUpdates(tasks, result.Tasks, now)
-	persistCtx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
-	defer cancel()
-	if err := s.persistChangedTasks(persistCtx, tasks, result.Tasks); err != nil {
-		s.log.Error("persist task updates failed",
-			"job_id", jobID,
-			"job_public_id", job.PublicID,
-			"error", err,
-		)
-		return DispatchResult{}, model.Job{}, err
-	}
-
-	job.Status, job.Progress, _ = AggregateJobState(
-		result.Tasks,
-		job.Status == model.JobStatusCancelling,
-	)
-	job.Result = buildJobResult(result.Tasks)
-	job.UpdatedAt = now
-	if err := s.jobStore.UpdateJob(persistCtx, job); err != nil {
-		s.log.Error("persist job state failed",
-			"job_id", jobID,
-			"job_public_id", job.PublicID,
-			"error", err,
-		)
-		return DispatchResult{}, model.Job{}, err
-	}
+	result.Tasks = finalTasks
 
 	if result.Dispatched {
+		if result.DispatchedTaskCount > 1 {
+			s.log.Info("tasks dispatched",
+				"job_id", job.ID,
+				"job_public_id", job.PublicID,
+				"task_ids", result.ExecutedTaskIDs,
+				"task_keys", result.ExecutedTaskKeys,
+				"task_count", result.DispatchedTaskCount,
+				"job_status", job.Status,
+				"progress", job.Progress,
+			)
+			return result, job, nil
+		}
 		s.log.Info("task dispatched",
 			"job_id", job.ID,
 			"job_public_id", job.PublicID,
@@ -148,15 +148,204 @@ func (s *Service) DispatchOnce(
 			"progress", job.Progress,
 		)
 	} else {
-		s.log.Debug("no ready task dispatched",
-			"job_id", job.ID,
-			"job_public_id", job.PublicID,
-			"job_status", job.Status,
-			"progress", job.Progress,
-		)
+		s.logNoDispatch(result, job)
 	}
 
 	return result, job, nil
+}
+
+func (s *Service) prepareDispatch(
+	ctx context.Context,
+	job model.Job,
+	tasks []model.Task,
+) ([]dispatchCandidate, []model.Task, error) {
+	updatedTasks := PromoteReadyTasks(tasks)
+	selected, err := selectDispatchCandidates(ctx, updatedTasks, s.registry, s.resources)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return selected, updatedTasks, nil
+}
+
+func (s *Service) executePreparedDispatch(
+	ctx context.Context,
+	job *model.Job,
+	updatedTasks []model.Task,
+	selected []dispatchCandidate,
+) (DispatchResult, []model.Task, error) {
+	executingTasks := cloneTasks(updatedTasks)
+	persistedTasks := cloneTasks(updatedTasks)
+	results := executeDispatchCandidates(
+		ctx,
+		*job,
+		s.withProgressReporters(ctx, selected),
+		s.resources,
+		s.scriptTimeoutPerSegment,
+		s.shotVideoTimeoutPerShot,
+		s.videoRenderTimeout,
+	)
+	finalTasks := executingTasks
+	for outcome := range results {
+		finalTasks = applyDispatchOutcome(*job, finalTasks, outcome)
+		finalTasks = PromoteReadyTasks(finalTasks)
+		if err := s.persistDispatchStage(job, persistedTasks, finalTasks); err != nil {
+			s.log.Error("persist incremental execution state failed",
+				"job_id", job.ID,
+				"job_public_id", job.PublicID,
+				"task_id", outcome.task.ID,
+				"task_key", outcome.task.Key,
+				"error", err,
+			)
+			return DispatchResult{}, nil, err
+		}
+		persistedTasks = cloneTasks(finalTasks)
+	}
+
+	return buildDispatchResult(finalTasks, selected), finalTasks, nil
+}
+
+func (s *Service) withProgressReporters(
+	parent context.Context,
+	selected []dispatchCandidate,
+) []dispatchCandidate {
+	enriched := make([]dispatchCandidate, 0, len(selected))
+	for _, candidate := range selected {
+		reporter := &taskProgressReporter{
+			task:  candidate.task,
+			tasks: s.taskStore,
+			log: slog.Default().With(
+				"component", "task_progress",
+				"task_id", candidate.task.ID,
+				"task_key", candidate.task.Key,
+			),
+		}
+		candidate.task.OutputRef = ensureTaskOutputRef(candidate.task.OutputRef)
+		candidate.dependencies = cloneTaskMap(candidate.dependencies)
+		candidate.taskCtx = model.WithTaskProgressReporter(parent, reporter)
+		enriched = append(enriched, candidate)
+	}
+
+	return enriched
+}
+
+func (s *Service) persistDispatchStage(
+	job *model.Job,
+	original []model.Task,
+	updated []model.Task,
+) error {
+	persistCtx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+
+	now := s.clock.Now()
+	updatedWithTimestamps := applyTaskUpdates(original, updated, now)
+	if err := s.persistChangedTasks(persistCtx, original, updatedWithTimestamps); err != nil {
+		return err
+	}
+
+	job.Status, job.Progress, _ = AggregateJobState(
+		updatedWithTimestamps,
+		job.Status == model.JobStatusCancelling,
+	)
+	job.Result = buildJobResult(updatedWithTimestamps)
+	job.UpdatedAt = now
+	if err := s.jobStore.UpdateJob(persistCtx, *job); err != nil {
+		return err
+	}
+
+	copy(updated, updatedWithTimestamps)
+	return nil
+}
+
+func (s *Service) logNoDispatch(_ DispatchResult, job model.Job) {
+	s.log.Debug("no ready task dispatched",
+		"job_id", job.ID,
+		"job_public_id", job.PublicID,
+		"job_status", job.Status,
+		"progress", job.Progress,
+	)
+}
+
+func cloneTasks(tasks []model.Task) []model.Task {
+	cloned := make([]model.Task, 0, len(tasks))
+	for _, task := range tasks {
+		cloned = append(cloned, task)
+	}
+
+	return cloned
+}
+
+func cloneTaskMap(input map[string]model.Task) map[string]model.Task {
+	cloned := make(map[string]model.Task, len(input))
+	for key, task := range input {
+		cloned[key] = task
+	}
+
+	return cloned
+}
+
+func ensureTaskOutputRef(outputRef map[string]any) map[string]any {
+	if outputRef == nil {
+		return map[string]any{}
+	}
+
+	return outputRef
+}
+
+type taskProgressReporter struct {
+	task  model.Task
+	tasks store.TaskStore
+	log   *slog.Logger
+}
+
+func (r *taskProgressReporter) Report(
+	ctx context.Context,
+	progress model.TaskProgress,
+) error {
+	if r == nil || r.tasks == nil {
+		return nil
+	}
+
+	loadCtx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+
+	task, err := r.tasks.GetTask(loadCtx, r.task.ID)
+	if err != nil {
+		r.log.Warn("load task for progress failed", "error", err)
+		return nil
+	}
+	if task.Status != model.TaskStatusRunning {
+		return nil
+	}
+
+	task.OutputRef = ensureTaskOutputRef(task.OutputRef)
+	task.OutputRef["progress"] = map[string]any{
+		"phase":   progress.Phase,
+		"message": progress.Message,
+		"current": progress.Current,
+		"total":   progress.Total,
+		"unit":    progress.Unit,
+	}
+
+	persistCtx, persistCancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer persistCancel()
+	if err := r.tasks.UpdateTask(persistCtx, task); err != nil {
+		r.log.Warn("persist task progress failed",
+			"error", err,
+			"phase", progress.Phase,
+		)
+		return nil
+	}
+
+	r.log.Debug("task progress updated",
+		"phase", progress.Phase,
+		"message", progress.Message,
+		"current", progress.Current,
+		"total", progress.Total,
+		"unit", progress.Unit,
+	)
+
+	return nil
 }
 
 func (s *Service) persistChangedTasks(

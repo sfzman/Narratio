@@ -114,6 +114,10 @@ func (e *ShotVideoExecutor) Execute(
 	if err != nil {
 		return task, err
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "writing_artifact",
+		Message: "正在写入分镜视频产物",
+	})
 	if err := e.writeShotVideoArtifact(artifactPath, output); err != nil {
 		return task, err
 	}
@@ -185,6 +189,13 @@ func (e *ShotVideoExecutor) buildShotVideoOutput(
 	sortShotImages(shotImages)
 	clips := make([]GeneratedShotVideo, 0, len(shotImages))
 	for index, shot := range shotImages {
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "generating_clip",
+			Message: fmt.Sprintf("正在生成第 %d/%d 个分镜视频片段", index+1, len(shotImages)),
+			Current: index + 1,
+			Total:   len(shotImages),
+			Unit:    "shot",
+		})
 		shouldGenerateVideo := index < requestedVideoCount
 		clip, err := e.buildShotVideoClip(
 			ctx,

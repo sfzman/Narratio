@@ -95,6 +95,14 @@ func TestHealthCheck(t *testing.T) {
 			"dashscope_text": "configured",
 			"tts":            "not_configured",
 		},
+		Resources: map[string]int{
+			"local_cpu":    4,
+			"llm_text":     2,
+			"tts":          3,
+			"image_gen":    2,
+			"video_gen":    1,
+			"video_render": 1,
+		},
 	})
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -110,6 +118,9 @@ func TestHealthCheck(t *testing.T) {
 	}
 	if got := recorder.Body.String(); got == "" {
 		t.Fatal("body is empty")
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"resources":{"image_gen":2,"llm_text":2,"local_cpu":4,"tts":3,"video_gen":1,"video_render":1}`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 
@@ -618,9 +629,12 @@ func TestDispatchOnce(t *testing.T) {
 					Status:   model.JobStatusQueued,
 					Progress: 33,
 				},
-				Dispatched:      true,
-				ExecutedTaskID:  11,
-				ExecutedTaskKey: "outline",
+				Dispatched:          true,
+				ExecutedTaskID:      11,
+				ExecutedTaskKey:     "outline",
+				ExecutedTaskIDs:     []int64{11, 12},
+				ExecutedTaskKeys:    []string{"outline", "character_sheet"},
+				DispatchedTaskCount: 2,
 			},
 		},
 		HealthStatus{},
@@ -637,6 +651,9 @@ func TestDispatchOnce(t *testing.T) {
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"executed_task_key":"outline"`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"dispatched_task_count":2`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
 }
 
 func TestDispatchOnceUsesDetachedContext(t *testing.T) {
@@ -651,9 +668,12 @@ func TestDispatchOnceUsesDetachedContext(t *testing.T) {
 					Status:   model.JobStatusRunning,
 					Progress: 50,
 				},
-				Dispatched:      true,
-				ExecutedTaskID:  14,
-				ExecutedTaskKey: "character_sheet",
+				Dispatched:          true,
+				ExecutedTaskID:      14,
+				ExecutedTaskKey:     "character_sheet",
+				ExecutedTaskIDs:     []int64{14},
+				ExecutedTaskKeys:    []string{"character_sheet"},
+				DispatchedTaskCount: 1,
 			},
 			call: func(ctx context.Context, publicID string) {
 				if publicID != "job_abc123" {

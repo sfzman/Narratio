@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -78,6 +79,30 @@ type fakeCommandRunner struct {
 	failuresByMatch   map[string]error
 	skipWriteByMatch  map[string]bool
 	emptyWriteByMatch map[string]bool
+}
+
+type recordingProgressReporter struct {
+	mu       sync.Mutex
+	progress []model.TaskProgress
+}
+
+func (r *recordingProgressReporter) Report(
+	_ context.Context,
+	progress model.TaskProgress,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progress = append(r.progress, progress)
+	return nil
+}
+
+func (r *recordingProgressReporter) snapshot() []model.TaskProgress {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cloned := make([]model.TaskProgress, len(r.progress))
+	copy(cloned, r.progress)
+	return cloned
 }
 
 func (r *fakeCommandRunner) Run(
@@ -502,6 +527,102 @@ func TestExecuteRendersFinalVideoWithMixedGeneratedAndFallbackClips(t *testing.T
 	if !runner.hasCommandContaining("ffmpeg", "merged_audio.wav", "final.mp4") {
 		t.Fatalf("expected final mux command, got %#v", runner.commands)
 	}
+}
+
+func TestExecuteReportsProgress(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	runner := &fakeCommandRunner{}
+	executor := NewExecutorWithRunner(runner, workspaceDir)
+	jobID := "job_video_progress_123"
+
+	writeRenderableVideoTestTTSArtifacts(
+		t,
+		workspaceDir,
+		jobID,
+		[]map[string]any{
+			{
+				"segment_index": 0,
+				"file_path":     filepath.ToSlash(filepath.Join("jobs", jobID, "audio", "segment_000.wav")),
+				"duration":      4.0,
+			},
+		},
+		4.0,
+	)
+	writeVideoTestJSONArtifact(t, workspaceDir, filepath.ToSlash(filepath.Join("jobs", jobID, "shot_videos", "manifest.json")), map[string]any{
+		"clips": []map[string]any{
+			{
+				"segment_index":     0,
+				"shot_index":        0,
+				"status":            "image_fallback",
+				"duration_seconds":  2.0,
+				"image_path":        filepath.ToSlash(filepath.Join("jobs", jobID, "images", "segment_000_shot_000.jpg")),
+				"source_image_path": filepath.ToSlash(filepath.Join("jobs", jobID, "images", "segment_000_shot_000.jpg")),
+				"source_type":       "image_fallback",
+				"is_fallback":       true,
+			},
+		},
+	})
+	writeVideoTestMediaFiles(
+		t,
+		workspaceDir,
+		filepath.ToSlash(filepath.Join("jobs", jobID, "images", "segment_000_shot_000.jpg")),
+	)
+
+	reporter := &recordingProgressReporter{}
+	ctx := model.WithTaskProgressReporter(context.Background(), reporter)
+
+	_, err := executor.Execute(
+		ctx,
+		model.Job{PublicID: jobID},
+		model.Task{Key: "video"},
+		map[string]model.Task{
+			"tts": {
+				Key: "tts",
+				OutputRef: map[string]any{
+					"artifact_path": filepath.ToSlash(filepath.Join("jobs", jobID, "audio", "tts_manifest.json")),
+					"segment_count": 1,
+					"audio_segment_paths": []string{
+						filepath.ToSlash(filepath.Join("jobs", jobID, "audio", "segment_000.wav")),
+					},
+					"total_duration_seconds": 4.0,
+				},
+			},
+			"shot_video": {
+				Key: "shot_video",
+				OutputRef: map[string]any{
+					"artifact_path":     filepath.ToSlash(filepath.Join("jobs", jobID, "shot_videos", "manifest.json")),
+					"image_source_type": "shot_images",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	progress := reporter.snapshot()
+	if len(progress) == 0 {
+		t.Fatal("len(progress) = 0, want non-zero")
+	}
+	assertHasPhase := func(phase string) {
+		t.Helper()
+		for _, item := range progress {
+			if item.Phase == phase {
+				return
+			}
+		}
+		t.Fatalf("progress phases = %#v, want phase %q", progress, phase)
+	}
+
+	assertHasPhase("validating_dependencies")
+	assertHasPhase("rendering_video")
+	assertHasPhase("rendering_audio")
+	assertHasPhase("rendering_segment")
+	assertHasPhase("concatenating_segments")
+	assertHasPhase("muxing_video")
+	assertHasPhase("finalizing_output")
 }
 
 func TestExecuteReturnsErrorWhenProbeSegmentDurationFails(t *testing.T) {

@@ -109,6 +109,10 @@ func (e *Executor) Execute(
 	if err != nil {
 		return task, err
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "writing_artifact",
+		Message: "正在写入分镜图片产物",
+	})
 	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
 		return task, fmt.Errorf("write image artifact: %w", err)
 	}
@@ -173,18 +177,23 @@ func (e *Executor) generateShotImages(
 	imageStyle string,
 	images []GeneratedShotImage,
 ) error {
-	if e.client == nil {
-		for index := range images {
+	var lastSuccessful *generatedShotResult
+	for index := range images {
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "generating_shot",
+			Message: fmt.Sprintf("正在生成第 %d/%d 张分镜图", index+1, len(images)),
+			Current: index + 1,
+			Total:   len(images),
+			Unit:    "shot",
+		})
+		if e.client == nil {
 			if err := e.writeFallbackShotImage(images[index]); err != nil {
 				return err
 			}
 			images[index].IsFallback = true
+			continue
 		}
-		return nil
-	}
 
-	var lastSuccessful *generatedShotResult
-	for index := range images {
 		result, err := e.generateShotImage(ctx, imageStyle, images[index])
 		if err != nil {
 			e.log.Warn("shot image generation failed after retries",

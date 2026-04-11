@@ -142,6 +142,68 @@ func TestShotVideoExecutorBuildsFallbackManifestFromShotImages(t *testing.T) {
 	}
 }
 
+func TestShotVideoExecutorReportsProgress(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	executor := NewShotVideoExecutor(workspaceDir, 3)
+	writeVideoTestJSONArtifact(t, workspaceDir, "jobs/job_shot_video_progress/images/image_manifest.json", map[string]any{
+		"shot_images": []map[string]any{
+			{
+				"segment_index": 0,
+				"shot_index":    0,
+				"file_path":     "jobs/job_shot_video_progress/images/segment_000_shot_000.jpg",
+			},
+			{
+				"segment_index": 0,
+				"shot_index":    1,
+				"file_path":     "jobs/job_shot_video_progress/images/segment_000_shot_001.jpg",
+			},
+		},
+	})
+	writeVideoTestMediaFiles(
+		t,
+		workspaceDir,
+		"jobs/job_shot_video_progress/images/segment_000_shot_000.jpg",
+		"jobs/job_shot_video_progress/images/segment_000_shot_001.jpg",
+	)
+
+	reporter := &recordingProgressReporter{}
+	ctx := model.WithTaskProgressReporter(context.Background(), reporter)
+
+	_, err := executor.Execute(
+		ctx,
+		model.Job{PublicID: "job_shot_video_progress"},
+		model.Task{Key: "shot_video", Type: model.TaskTypeShotVideo},
+		map[string]model.Task{
+			"image": {
+				Key: "image",
+				OutputRef: map[string]any{
+					"artifact_path": "jobs/job_shot_video_progress/images/image_manifest.json",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	progress := reporter.snapshot()
+	if len(progress) < 3 {
+		t.Fatalf("len(progress) = %d, want >= 3", len(progress))
+	}
+	if progress[0].Phase != "generating_clip" || progress[0].Current != 1 || progress[0].Total != 2 {
+		t.Fatalf("progress[0] = %#v, want first clip progress", progress[0])
+	}
+	if progress[1].Phase != "generating_clip" || progress[1].Current != 2 || progress[1].Total != 2 {
+		t.Fatalf("progress[1] = %#v, want second clip progress", progress[1])
+	}
+	last := progress[len(progress)-1]
+	if last.Phase != "writing_artifact" {
+		t.Fatalf("last progress phase = %#v, want writing_artifact", last.Phase)
+	}
+}
+
 func TestShotVideoStatusValidation(t *testing.T) {
 	t.Parallel()
 

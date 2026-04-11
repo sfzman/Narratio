@@ -51,12 +51,20 @@ func (e *OutlineExecutor) Execute(
 
 	artifactPath := fmt.Sprintf("jobs/%s/outline.json", job.PublicID)
 	e.logExecutionStart(job, task)
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "requesting_text",
+		Message: "正在请求大纲生成",
+	})
 
 	output, response, preview, err := e.generateOutput(ctx, article)
 	if err != nil {
 		e.logGenerationError("outline text generation failed", job, task, err)
 		return task, err
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "writing_artifact",
+		Message: "正在写入大纲产物",
+	})
 	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
 		return task, fmt.Errorf("write outline artifact: %w", err)
 	}

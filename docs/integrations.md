@@ -37,13 +37,13 @@ payload := map[string]any{
 
 **响应解析**：取 `choices[0].message.content`，期望返回 JSON 格式（见 pipeline.md Stage 1）
 
-**超时**：当前代码里 DashScope 文本 HTTP client timeout 为 600s；其中 `script` task 的执行 deadline 现按 `segment_count * SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 200 秒，其他文本 task 仍默认使用 12 分钟执行 deadline。后台 runner / 开发态手动 dispatch 的外层超时已放宽，不再比 `script` task 更早截断。  
-**重试**：文档原先约定为 2 次、退避 2s/4s；当前代码尚未接入真实 retry/backoff  
+**超时**：当前代码里 DashScope 文本 HTTP client timeout 由 `DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS` 配置，默认 `600s`；其中 `script` task 的执行 deadline 现按 `segment_count * SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 200 秒，其他文本 task 仍默认使用 12 分钟执行 deadline。后台 runner / 开发态手动 dispatch 的外层超时已放宽，不再比 `script` task 更早截断。  
+**重试**：当前代码已接入最小 retry/backoff，配置项为 `DASHSCOPE_TEXT_MAX_RETRIES` 与 `DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS`；默认仅对 timeout、`429`、`5xx` 生效，重试 2 次，退避 `2s / 4s`  
 **限流**：无需客户端限流，依赖 API 本身的速率限制返回 429 时退避
 **当前调用形态**：`outline` / `character_sheet` 当前各调用 1 次；`script` 启用真实文本生成时会按 segment 逐段调用，再汇总写回同一个 `script.json`
 **当前输出预算**：通用文本请求默认 `max_tokens=4096`；`script` executor 当前会把自身最小预算提升到 `8192`
 
-**当前实现状态**：当前仓库的 `script/client.go` 已接入 OpenAI-compatible 文本请求；retry/backoff 仍未接入真实实现
+**当前实现状态**：当前仓库的 `script/client.go` 已接入 OpenAI-compatible 文本请求；发送前会记录请求 URL / model / message_count / HTTP timeout，收到响应后会记录状态码与耗时；当命中可重试错误时，会额外打印下一次 attempt 与 backoff 时长
 
 **错误码处理**
 

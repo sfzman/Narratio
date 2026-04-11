@@ -14,10 +14,13 @@ type SchedulerDispatcher interface {
 }
 
 type DispatchOutcome struct {
-	Job             model.Job
-	Dispatched      bool
-	ExecutedTaskID  int64
-	ExecutedTaskKey string
+	Job                 model.Job
+	Dispatched          bool
+	ExecutedTaskID      int64
+	ExecutedTaskKey     string
+	ExecutedTaskIDs     []int64
+	ExecutedTaskKeys    []string
+	DispatchedTaskCount int
 }
 
 type DispatchService struct {
@@ -67,9 +70,12 @@ func (s *DispatchService) DispatchOnce(
 	}
 
 	return DispatchOutcome{
-		Job:             updatedJob,
-		Dispatched:      result.Dispatched,
-		ExecutedTaskID:  result.ExecutedTaskID,
-		ExecutedTaskKey: result.ExecutedTaskKey,
+		Job:                 updatedJob,
+		Dispatched:          result.Dispatched,
+		ExecutedTaskID:      result.ExecutedTaskID,
+		ExecutedTaskKey:     result.ExecutedTaskKey,
+		ExecutedTaskIDs:     result.ExecutedTaskIDs,
+		ExecutedTaskKeys:    result.ExecutedTaskKeys,
+		DispatchedTaskCount: result.DispatchedTaskCount,
 	}, nil
 }

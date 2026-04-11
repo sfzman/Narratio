@@ -35,8 +35,9 @@ type JobDispatcher interface {
 }
 
 type HealthStatus struct {
-	Version  string
-	Services map[string]string
+	Version   string
+	Services  map[string]string
+	Resources map[string]int
 }
 
 type Handlers struct {

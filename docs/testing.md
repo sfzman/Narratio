@@ -108,7 +108,8 @@ func TestScriptRun(t *testing.T) {
 ### scheduler
 - [ ] 所有依赖满足后，task 从 pending 进入 ready
 - [ ] 共享同一 `ResourceKey` 的 task 会共同受并发上限约束
-- [ ] 无依赖冲突的 task 可并行启动
+- [x] 无依赖冲突且资源配额允许的 task 可在同一轮 `DispatchOnce` 中并行启动
+- [x] executor 运行中通过 `model.ReportTaskProgress(...)` 上报的进度会被持久化到 `task.output_ref.progress`，并在 task 进入终态后清理
 - [ ] 上游 task 失败后，下游 task 正确变为 skipped 或保持 pending
 - [ ] 运行中 task 的 panic 被 recover 后状态置为 failed
 
@@ -129,6 +130,7 @@ func TestScriptRun(t *testing.T) {
 - [x] shot_video / video 当前会校验 `status` 只能是正式枚举 `generated_video / image_fallback`
 - [x] shot_video executor 当前已支持注入 mock client，并在成功时写出 `generated_video` clip、失败时回退到 `image_fallback`
 - [x] shot_video executor 当前支持 `video_count`，只对排序后的前 `n` 个 shot 调图生视频，其余 shot 直接登记为 `image_fallback`
+- [x] shot_video executor 当前会按 shot 上报运行中 progress，并在写 manifest 前切到 `writing_artifact`
 - [x] shot_video HTTP client 当前已覆盖 submit -> poll -> download 的纯 mock 测试，并对齐原 gradio app 的异步任务流
 - [x] 文档层已明确：真实 `shot_video` 联调的前置条件应先确认 `character_image` / `image` 已跑出稳定 `shot_images`
 - [x] image executor 优先从 script 的 shot 级 prompt 消费出图输入，不再依赖 summary/script/text 兼容字段
@@ -145,6 +147,7 @@ func TestScriptRun(t *testing.T) {
 - [x] video executor 当前会校验 `shot_video.clips` 的非零时长、排序与去重语义，并把 `duration_seconds` 汇总为视觉拼接总时长
 - [x] 已补一条 fixture 驱动的 `live_video_render_smoke`，专门验证 `tts + shot_video` 能经 FFmpeg 真实落盘 `output/final.mp4`
 - [x] video executor 已覆盖 `ffprobe` 失败、最终 mux 失败、最终输出缺失/空文件等关键失败分支
+- [x] video executor 当前会按关键阶段上报运行中 progress，至少覆盖依赖校验、音频拼接、segment 渲染、分段拼接、最终 mux 和产物整理
 - [ ] video executor 校验 `tts.segment_count` 与 `shot_video.clips` 的时长/排序/拼接语义，并在真实 FFmpeg 模式下返回明确错误
 
 ## FFmpeg 测试策略

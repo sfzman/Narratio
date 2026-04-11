@@ -79,6 +79,7 @@ type Executor interface {
 - `dependencies` 由 scheduler 根据 `task.DependsOn` 提供，executor 不直接查数据库
 - 返回值中的 `task` 用于回写 `OutputRef`、`Attempt` 等执行产物
 - `scheduler` 负责最终状态迁移；executor 不直接持久化数据库
+- executor 若需要向前端暴露运行中进度，只能通过 `model.ReportTaskProgress(ctx, model.TaskProgress{...})` 上报；不得自行写 store
 - 便于测试时 mock
 
 ## HTTP Handler 规范
@@ -163,9 +164,18 @@ type Config struct {
     Port                 string
     DatabaseDriver       string
     DatabaseDSN          string
+    ResourceLocalCPUConcurrency int
+    ResourceLLMTextConcurrency int
+    ResourceTTSConcurrency int
+    ResourceImageGenConcurrency int
+    ResourceVideoGenConcurrency int
+    ResourceVideoRenderConcurrency int
     DashScopeTextBaseURL string
     DashScopeTextModel   string
     DashScopeTextAPIKey  string
+    DashScopeTextRequestTimeoutSeconds int
+    DashScopeTextMaxRetries int
+    DashScopeTextRetryBackoffSeconds int
     DashScopeImageBaseURL string
     DashScopeImageModel  string
     DashScopeImageAPIKey string

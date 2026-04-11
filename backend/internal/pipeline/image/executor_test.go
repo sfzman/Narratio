@@ -6,6 +6,7 @@ import (
 	"image/jpeg"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -38,6 +39,30 @@ func (f *fakeClient) Generate(_ context.Context, request Request) (Response, err
 	}
 
 	return f.response, nil
+}
+
+type recordingProgressReporter struct {
+	mu       sync.Mutex
+	progress []model.TaskProgress
+}
+
+func (r *recordingProgressReporter) Report(
+	_ context.Context,
+	progress model.TaskProgress,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progress = append(r.progress, progress)
+	return nil
+}
+
+func (r *recordingProgressReporter) snapshot() []model.TaskProgress {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cloned := make([]model.TaskProgress, len(r.progress))
+	copy(cloned, r.progress)
+	return cloned
 }
 
 func TestExecuteBuildsImageOutputRef(t *testing.T) {
@@ -209,6 +234,72 @@ func TestExecuteBuildsImageOutputRef(t *testing.T) {
 	}
 	if len(artifact.ShotImages[1].MatchedCharacters) != 0 {
 		t.Fatalf("len(artifact.ShotImages[1].MatchedCharacters) = %d, want 0", len(artifact.ShotImages[1].MatchedCharacters))
+	}
+}
+
+func TestExecuteReportsProgress(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	executor := NewExecutor(workspaceDir)
+	writer := newArtifactWriter(workspaceDir)
+	job := model.Job{PublicID: "job_image_progress"}
+	task := model.Task{
+		Key:     "image",
+		Payload: map[string]any{"image_style": "realistic"},
+	}
+	dependencies := map[string]model.Task{
+		"script": {
+			Key: "script",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_image_progress/script.json",
+			},
+		},
+		"character_image": {
+			Key: "character_image",
+			OutputRef: map[string]any{
+				"artifact_path": "jobs/job_image_progress/character_images/manifest.json",
+			},
+		},
+	}
+	if err := writer.WriteJSON("jobs/job_image_progress/script.json", scriptArtifactOutput{
+		Segments: []scriptArtifactSegment{
+			{
+				Index: 0,
+				Shots: []scriptArtifactShot{
+					{Index: 0, TextPrompt: "雨夜街道上孤灯摇晃"},
+					{Index: 1, TextPrompt: "少年停在巷口回头张望"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteJSON(script) error = %v", err)
+	}
+	if err := writer.WriteJSON("jobs/job_image_progress/character_images/manifest.json", CharacterImageOutput{}); err != nil {
+		t.Fatalf("WriteJSON(character_image) error = %v", err)
+	}
+
+	reporter := &recordingProgressReporter{}
+	ctx := model.WithTaskProgressReporter(context.Background(), reporter)
+
+	_, err := executor.Execute(ctx, job, task, dependencies)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	progress := reporter.snapshot()
+	if len(progress) < 3 {
+		t.Fatalf("len(progress) = %d, want >= 3", len(progress))
+	}
+	if progress[0].Phase != "generating_shot" || progress[0].Current != 1 || progress[0].Total != 2 {
+		t.Fatalf("progress[0] = %#v, want first shot progress", progress[0])
+	}
+	if progress[1].Phase != "generating_shot" || progress[1].Current != 2 || progress[1].Total != 2 {
+		t.Fatalf("progress[1] = %#v, want second shot progress", progress[1])
+	}
+	last := progress[len(progress)-1]
+	if last.Phase != "writing_artifact" {
+		t.Fatalf("last progress phase = %#v, want writing_artifact", last.Phase)
 	}
 }
 

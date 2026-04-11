@@ -130,7 +130,7 @@ func buildRuntimeHint(summary taskSummary, snapshot taskStateSnapshot) string {
 		return "存在失败 task，请查看 task 明细里的 error 字段。"
 	}
 	if summary.Running == 0 && len(snapshot.ReadyKeys) > 0 {
-		return "当前有 ready task，但 skeleton 模式没有后台自动调度。请继续点击 Dispatch Once。"
+		return "当前有 ready task 等待后台调度；若长时间没有变化，请检查日志或手动点击 Dispatch Once。"
 	}
 	if summary.Running == 0 && summary.Pending > 0 && summary.Succeeded > 0 {
 		return "当前没有运行中的 task。若依赖已满足，刷新后查看是否出现 ready task。"

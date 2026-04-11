@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sfzman/Narratio/backend/internal/config"
 	"github.com/sfzman/Narratio/backend/internal/model"
 )
 
@@ -195,5 +196,65 @@ func TestLoadRuntimeReturnsErrorWhenFFmpegStartupCheckFails(t *testing.T) {
 	_, err := LoadRuntime()
 	if err == nil {
 		t.Fatal("LoadRuntime() error = nil, want ffmpeg startup check error")
+	}
+}
+
+func TestDefaultResourceLimitsUsesConfig(t *testing.T) {
+	limits := defaultResourceLimits(&config.Config{
+		ResourceLocalCPUConcurrency:    6,
+		ResourceLLMTextConcurrency:     4,
+		ResourceTTSConcurrency:         5,
+		ResourceImageGenConcurrency:    3,
+		ResourceVideoGenConcurrency:    2,
+		ResourceVideoRenderConcurrency: 2,
+	})
+
+	if limits[model.ResourceLocalCPU] != 6 {
+		t.Fatalf("local_cpu limit = %d, want 6", limits[model.ResourceLocalCPU])
+	}
+	if limits[model.ResourceLLMText] != 4 {
+		t.Fatalf("llm_text limit = %d, want 4", limits[model.ResourceLLMText])
+	}
+	if limits[model.ResourceTTS] != 5 {
+		t.Fatalf("tts limit = %d, want 5", limits[model.ResourceTTS])
+	}
+	if limits[model.ResourceImageGen] != 3 {
+		t.Fatalf("image_gen limit = %d, want 3", limits[model.ResourceImageGen])
+	}
+	if limits[model.ResourceVideoGen] != 2 {
+		t.Fatalf("video_gen limit = %d, want 2", limits[model.ResourceVideoGen])
+	}
+	if limits[model.ResourceVideoRender] != 2 {
+		t.Fatalf("video_render limit = %d, want 2", limits[model.ResourceVideoRender])
+	}
+}
+
+func TestHealthResourceLimitsUsesConfig(t *testing.T) {
+	resources := healthResourceLimits(&config.Config{
+		ResourceLocalCPUConcurrency:    6,
+		ResourceLLMTextConcurrency:     4,
+		ResourceTTSConcurrency:         5,
+		ResourceImageGenConcurrency:    3,
+		ResourceVideoGenConcurrency:    2,
+		ResourceVideoRenderConcurrency: 2,
+	})
+
+	if resources["local_cpu"] != 6 {
+		t.Fatalf("local_cpu health limit = %d, want 6", resources["local_cpu"])
+	}
+	if resources["llm_text"] != 4 {
+		t.Fatalf("llm_text health limit = %d, want 4", resources["llm_text"])
+	}
+	if resources["tts"] != 5 {
+		t.Fatalf("tts health limit = %d, want 5", resources["tts"])
+	}
+	if resources["image_gen"] != 3 {
+		t.Fatalf("image_gen health limit = %d, want 3", resources["image_gen"])
+	}
+	if resources["video_gen"] != 2 {
+		t.Fatalf("video_gen health limit = %d, want 2", resources["video_gen"])
+	}
+	if resources["video_render"] != 2 {
+		t.Fatalf("video_render health limit = %d, want 2", resources["video_render"])
 	}
 }

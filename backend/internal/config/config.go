@@ -13,6 +13,12 @@ type Config struct {
 	Port                               string
 	DatabaseDriver                     string
 	DatabaseDSN                        string
+	ResourceLocalCPUConcurrency        int
+	ResourceLLMTextConcurrency         int
+	ResourceTTSConcurrency             int
+	ResourceImageGenConcurrency        int
+	ResourceVideoGenConcurrency        int
+	ResourceVideoRenderConcurrency     int
 	ScriptTimeoutPerSegmentSeconds     int
 	VideoRenderTimeoutSeconds          int
 	ShotVideoTimeoutPerShotSeconds     int
@@ -24,6 +30,9 @@ type Config struct {
 	DashScopeTextBaseURL               string
 	DashScopeTextModel                 string
 	DashScopeTextAPIKey                string
+	DashScopeTextRequestTimeoutSeconds int
+	DashScopeTextMaxRetries            int
+	DashScopeTextRetryBackoffSeconds   int
 	DashScopeImageBaseURL              string
 	DashScopeImageModel                string
 	DashScopeImageAPIKey               string
@@ -73,6 +82,12 @@ func Load() (*Config, error) {
 		Port:                               envOrDefault("PORT", "8080"),
 		DatabaseDriver:                     databaseDriver,
 		DatabaseDSN:                        databaseDSN,
+		ResourceLocalCPUConcurrency:        envAsIntOrDefault("RESOURCE_LOCAL_CPU_CONCURRENCY", 4),
+		ResourceLLMTextConcurrency:         envAsIntOrDefault("RESOURCE_LLM_TEXT_CONCURRENCY", 2),
+		ResourceTTSConcurrency:             envAsIntOrDefault("RESOURCE_TTS_CONCURRENCY", 3),
+		ResourceImageGenConcurrency:        envAsIntOrDefault("RESOURCE_IMAGE_GEN_CONCURRENCY", 2),
+		ResourceVideoGenConcurrency:        envAsIntOrDefault("RESOURCE_VIDEO_GEN_CONCURRENCY", 1),
+		ResourceVideoRenderConcurrency:     envAsIntOrDefault("RESOURCE_VIDEO_RENDER_CONCURRENCY", 1),
 		ScriptTimeoutPerSegmentSeconds:     envAsIntOrDefault("SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS", 200),
 		VideoRenderTimeoutSeconds:          envAsIntOrDefault("VIDEO_RENDER_TIMEOUT_SECONDS", 1800),
 		ShotVideoTimeoutPerShotSeconds:     envAsIntOrDefault("SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS", 200),
@@ -84,6 +99,9 @@ func Load() (*Config, error) {
 		DashScopeTextBaseURL:               envOrDefault("DASHSCOPE_TEXT_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
 		DashScopeTextModel:                 envOrDefault("DASHSCOPE_TEXT_MODEL", "qwen-max"),
 		DashScopeTextAPIKey:                env("DASHSCOPE_TEXT_API_KEY"),
+		DashScopeTextRequestTimeoutSeconds: envAsIntOrDefault("DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS", 600),
+		DashScopeTextMaxRetries:            envAsIntOrDefault("DASHSCOPE_TEXT_MAX_RETRIES", 2),
+		DashScopeTextRetryBackoffSeconds:   envAsIntOrDefault("DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS", 2),
 		DashScopeImageBaseURL:              envOrDefault("DASHSCOPE_IMAGE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
 		DashScopeImageModel:                envOrDefault("DASHSCOPE_IMAGE_MODEL", "qwen-image-2.0"),
 		DashScopeImageAPIKey:               env("DASHSCOPE_IMAGE_API_KEY"),

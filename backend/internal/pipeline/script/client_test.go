@@ -165,6 +165,108 @@ func TestHTTPTextClientGenerateInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestHTTPTextClientGenerateRetriesStatusError(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(w, "busy", http.StatusTooManyRequests)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl_retry",
+			"choices":[
+				{"index":0,"message":{"role":"assistant","content":"{\"ok\":true}"}}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPTextClient(
+		server.URL,
+		"test-key",
+		&http.Client{Timeout: time.Second},
+		HTTPTextClientOptions{
+			MaxRetries: 2,
+			Backoff:    time.Second,
+			Sleep: func(context.Context, time.Duration) error {
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHTTPTextClient() error = %v", err)
+	}
+
+	response, err := client.Generate(context.Background(), TextRequest{
+		Model: "qwen-max",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "retry me"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	text, err := response.FirstText()
+	if err != nil {
+		t.Fatalf("FirstText() error = %v", err)
+	}
+	if text != "{\"ok\":true}" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestHTTPTextClientGenerateStopsAfterRetryLimit(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "busy", http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPTextClient(
+		server.URL,
+		"test-key",
+		&http.Client{Timeout: time.Second},
+		HTTPTextClientOptions{
+			MaxRetries: 1,
+			Backoff:    time.Second,
+			Sleep: func(context.Context, time.Duration) error {
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHTTPTextClient() error = %v", err)
+	}
+
+	_, err = client.Generate(context.Background(), TextRequest{
+		Model: "qwen-max",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "retry me"},
+		},
+	})
+	if err == nil {
+		t.Fatal("Generate() error = nil, want status error")
+	}
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error = %T, want *StatusError", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
 func TestTextResponseFirstTextNoContent(t *testing.T) {
 	t.Parallel()
 

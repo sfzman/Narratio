@@ -97,6 +97,10 @@ func (e *CharacterImageExecutor) Execute(
 	if err != nil {
 		return task, err
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "writing_artifact",
+		Message: "正在写入人物参考图产物",
+	})
 	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
 		return task, fmt.Errorf("write character image artifact: %w", err)
 	}
@@ -234,11 +238,18 @@ func (e *CharacterImageExecutor) generateLiveCharacterImages(
 	ctx context.Context,
 	images []CharacterReferenceImage,
 ) error {
-	if e.client == nil {
-		return nil
-	}
-
 	for index := range images {
+		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+			Phase:   "generating_character",
+			Message: fmt.Sprintf("正在生成第 %d/%d 个人物参考图", index+1, len(images)),
+			Current: index + 1,
+			Total:   len(images),
+			Unit:    "character",
+		})
+		if e.client == nil {
+			continue
+		}
+
 		generated, err := e.client.Generate(ctx, Request{
 			Model:          e.generationConfig.Model,
 			Prompt:         images[index].Prompt,

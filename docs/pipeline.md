@@ -212,6 +212,7 @@ type CharacterReferenceImage struct {
 **当前代码状态**
 - 已接入独立 executor：读取真实 `character_sheet.json`，为每个角色生成参考图 manifest
 - 当前每个角色会额外生成 `match_terms`，供下游 `image` 做轻量命中；默认至少包含角色名本身，并会按 `/ | 、 ， , ; ；` 这类分隔符拆出简单别名
+- executor 运行中会按角色上报瞬时 progress，便于前端观察当前推进到第几个角色参考图
 - 当前人物参考图固定走“单人、正面、全身像”构图，不跟 job 的 `aspect_ratio` 联动；当前固定比例为 `2:3`，默认尺寸为 `832x1248`
 - 默认仍是 skeleton 模式：会把 JSON artifact 和本地 fallback JPG 一起落盘
 - 若显式开启 `ENABLE_LIVE_IMAGE_GENERATION=true` 且注入 DashScope 图像 client，`character_image` 也会按角色逐个请求真实参考图，并把返回图片写入 `character_{index}.jpg`
@@ -432,6 +433,7 @@ type ImageCharacterReference struct {
 **当前代码状态**
 - 已接入最小 skeleton executor：会读取真实 `script.json` 与 `character_images/manifest.json`，并把结果落盘到 `jobs/{job_id}/images/image_manifest.json`
 - 当前真实出图路径已经切到 `shot_images`：每个可消费 shot 都会生成自己的 JPG，并记录 `segment_index / shot_index / file_path / prompt / prompt_type`
+- executor 运行中会按 shot 上报瞬时 progress，便于前端观察当前推进到第几张分镜图
 - 当前 manifest 仍保留 `images` 作为给 `video` 的 segment 级兼容摘要，但不再额外单独请求 segment 图；摘要只复用本 segment 某个已生成 shot 的文件路径
 - `matched_characters` 当前使用轻量规则：遍历 `match_terms`，在 segment `shots` 的 prompt 与 `involved_characters` 中做字符串命中
 - 当前 prompt 组装顺序与原 Gradio 思路对齐：优先使用 `matched_characters`，若为空则回退 `character_references` 作为 candidates；图生图时会把这些角色的参考图作为输入一并传给模型
@@ -492,6 +494,7 @@ type GeneratedShotVideo struct {
 - 默认 clip 时长为 `3` 秒，也可通过 `SHOT_VIDEO_DEFAULT_DURATION_SECONDS` 覆盖
 - 每条 clip 都会保留 `source_image_path`，用于稳定表达“这段视频片段是由哪一张 shot image 驱动出来的”；即使成功生成真实视频，这个字段也不丢
 - 当前 `status` 的正式枚举先收口为 `generated_video | image_fallback`；还不单独引入 `failed` 状态，失败场景先通过回退到 `image_fallback` 表达
+- executor 运行中会按 shot 上报瞬时 progress，便于前端观察当前推进到第几个分镜视频片段
 - `task.output_ref.image_source_type` 当前会透传底层仍消费的是 `shot_images`；`generation_mode` 现已稳定收口为 `generated_video | image_fallback | mixed`
 - `task.output_ref.aspect_ratio` 当前会透传本次 job 的画幅比例，供最终 `video` 阶段与调试面板复用
 - `task.output_ref.requested_video_count / selected_video_count` 当前分别表示请求的前 `n` 个、以及实际参与图生视频的前 `n` 个
@@ -534,6 +537,7 @@ type VideoOutput struct {
 - 当前对 `tts` 先做 `output_ref` 级最小结构校验（如 `segment_count`、`audio_segment_paths` 数量、总时长）
 - 若 executor 注入了 `workspaceDir`，当前还会额外校验 `tts_manifest.json` 与 `audio_segment_paths` 引用的 WAV 文件是否存在
 - 若 executor 注入了 `workspaceDir`，当前会校验 `shot_videos/manifest.json` 的 clip 结构、segment coverage、排序与去重语义，以及每条 `video_path` / `image_path` 引用的文件是否存在
+- executor 运行中会按阶段上报瞬时 progress，当前至少覆盖依赖校验、音频拼接、逐 segment 渲染、分段拼接、最终 mux 和产物整理
 - 当前真实渲染路径是：先合并所有 TTS 音频，再按 segment 聚合 shot clip；`generated_video` 会先归一化到统一画幅，`image_fallback` 会先渲染成静态 MP4，然后按 segment 级音频时长做整体变速，最后拼接并 mux 成最终 MP4
 - 当前 runtime 会在服务启动时先检查本机 `ffmpeg` 是否可用；`video` task 本身则受独立 `VIDEO_RENDER_TIMEOUT_SECONDS` 配置约束
 - 当前 `duration_seconds` 已改为基于 `shot_video.clips[*].duration_seconds` 求和得到的视觉拼接总时长；同时会额外回填 `narration_duration_seconds` 与 `visual_duration_seconds` 便于联调对比

@@ -188,6 +188,7 @@
 补充语义：
 
 - `output_ref.artifact_path` 始终是相对 `WORKSPACE_DIR` 的路径
+- task 处于 `running` 时，`output_ref.progress` 可能暂时出现，结构为 `{phase, message, current, total, unit}`；该字段仅用于运行态展示，task 进入终态后会被清理
 - `script` task 额外会返回 `output_ref.segment_artifact_dir`，指向 `jobs/{job_id}/script`；该目录下会逐段写出 `segment_{index}.json`
 - `image` task 当前会额外返回 `output_ref.image_count`（segment 级兼容图片数）与 `output_ref.shot_image_count`（shot 级 manifest 条目数）
 - `image.output_ref.generated_image_count / fallback_image_count` 当前都是按 `shot_images` 统计，而不是按 segment 摘要图统计
@@ -319,6 +320,14 @@ Accept-Ranges: bytes
     "dashscope_text": "configured_but_disabled",
     "dashscope_image": "configured_but_disabled",
     "tts": "not_configured"
+  },
+  "resources": {
+    "local_cpu": 4,
+    "llm_text": 2,
+    "tts": 3,
+    "image_gen": 2,
+    "video_gen": 1,
+    "video_render": 1
   }
 }
 ```
@@ -326,6 +335,7 @@ Accept-Ranges: bytes
 当前实现说明：
 
 - 当前 health 接口反映的是服务 bootstrap 结果和关键配置是否存在
+- 当前 health 接口同时返回运行中实际采用的资源池并发上限，便于联调时核对调度配置
 - 当相关 API Key 已配置但 live 开关未打开时，`dashscope_text` / `dashscope_image` 会返回 `configured_but_disabled`
 - 当前 health 接口仍不会主动探测 DashScope / TTS 联通性；但 runtime 启动阶段现在会先检查本机 `ffmpeg` 是否可用
 

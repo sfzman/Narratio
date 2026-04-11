@@ -11,6 +11,12 @@ var narratioEnvKeys = []string{
 	"DATABASE_DRIVER",
 	"DATABASE_DSN",
 	"WORKSPACE_DIR",
+	"RESOURCE_LOCAL_CPU_CONCURRENCY",
+	"RESOURCE_LLM_TEXT_CONCURRENCY",
+	"RESOURCE_TTS_CONCURRENCY",
+	"RESOURCE_IMAGE_GEN_CONCURRENCY",
+	"RESOURCE_VIDEO_GEN_CONCURRENCY",
+	"RESOURCE_VIDEO_RENDER_CONCURRENCY",
 	"SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS",
 	"SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS",
 	"VIDEO_RENDER_TIMEOUT_SECONDS",
@@ -22,6 +28,9 @@ var narratioEnvKeys = []string{
 	"DASHSCOPE_TEXT_API_KEY",
 	"DASHSCOPE_TEXT_BASE_URL",
 	"DASHSCOPE_TEXT_MODEL",
+	"DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS",
+	"DASHSCOPE_TEXT_MAX_RETRIES",
+	"DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS",
 	"DASHSCOPE_IMAGE_API_KEY",
 	"DASHSCOPE_IMAGE_BASE_URL",
 	"DASHSCOPE_IMAGE_MODEL",
@@ -60,6 +69,24 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.ScriptTimeoutPerSegmentSeconds != 200 {
 		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d", cfg.ScriptTimeoutPerSegmentSeconds)
 	}
+	if cfg.ResourceLocalCPUConcurrency != 4 {
+		t.Fatalf("ResourceLocalCPUConcurrency = %d", cfg.ResourceLocalCPUConcurrency)
+	}
+	if cfg.ResourceLLMTextConcurrency != 2 {
+		t.Fatalf("ResourceLLMTextConcurrency = %d", cfg.ResourceLLMTextConcurrency)
+	}
+	if cfg.ResourceTTSConcurrency != 3 {
+		t.Fatalf("ResourceTTSConcurrency = %d", cfg.ResourceTTSConcurrency)
+	}
+	if cfg.ResourceImageGenConcurrency != 2 {
+		t.Fatalf("ResourceImageGenConcurrency = %d", cfg.ResourceImageGenConcurrency)
+	}
+	if cfg.ResourceVideoGenConcurrency != 1 {
+		t.Fatalf("ResourceVideoGenConcurrency = %d", cfg.ResourceVideoGenConcurrency)
+	}
+	if cfg.ResourceVideoRenderConcurrency != 1 {
+		t.Fatalf("ResourceVideoRenderConcurrency = %d", cfg.ResourceVideoRenderConcurrency)
+	}
 	if cfg.VideoRenderTimeoutSeconds != 1800 {
 		t.Fatalf("VideoRenderTimeoutSeconds = %d", cfg.VideoRenderTimeoutSeconds)
 	}
@@ -83,6 +110,15 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.DashScopeTextBaseURL != "https://coding.dashscope.aliyuncs.com/v1" {
 		t.Fatalf("DashScopeTextBaseURL = %q", cfg.DashScopeTextBaseURL)
+	}
+	if cfg.DashScopeTextRequestTimeoutSeconds != 600 {
+		t.Fatalf("DashScopeTextRequestTimeoutSeconds = %d", cfg.DashScopeTextRequestTimeoutSeconds)
+	}
+	if cfg.DashScopeTextMaxRetries != 2 {
+		t.Fatalf("DashScopeTextMaxRetries = %d", cfg.DashScopeTextMaxRetries)
+	}
+	if cfg.DashScopeTextRetryBackoffSeconds != 2 {
+		t.Fatalf("DashScopeTextRetryBackoffSeconds = %d", cfg.DashScopeTextRetryBackoffSeconds)
 	}
 	if cfg.DashScopeImageModel != "qwen-image-2.0" {
 		t.Fatalf("DashScopeImageModel = %q", cfg.DashScopeImageModel)
@@ -144,6 +180,42 @@ func TestLoadReadsLiveTextGenerationFlag(t *testing.T) {
 	}
 }
 
+func TestLoadReadsDashScopeTextRequestTimeoutSeconds(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS", "900")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.DashScopeTextRequestTimeoutSeconds != 900 {
+		t.Fatalf("DashScopeTextRequestTimeoutSeconds = %d, want 900", cfg.DashScopeTextRequestTimeoutSeconds)
+	}
+}
+
+func TestLoadReadsDashScopeTextRetryConfig(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("DASHSCOPE_TEXT_MAX_RETRIES", "4")
+	t.Setenv("DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS", "3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.DashScopeTextMaxRetries != 4 {
+		t.Fatalf("DashScopeTextMaxRetries = %d, want 4", cfg.DashScopeTextMaxRetries)
+	}
+	if cfg.DashScopeTextRetryBackoffSeconds != 3 {
+		t.Fatalf("DashScopeTextRetryBackoffSeconds = %d, want 3", cfg.DashScopeTextRetryBackoffSeconds)
+	}
+}
+
 func TestLoadReadsScriptTimeoutPerSegmentSeconds(t *testing.T) {
 	t.Setenv("DATABASE_DRIVER", "sqlite")
 	t.Setenv("DATABASE_DSN", "./narratio.db")
@@ -157,6 +229,42 @@ func TestLoadReadsScriptTimeoutPerSegmentSeconds(t *testing.T) {
 
 	if cfg.ScriptTimeoutPerSegmentSeconds != 320 {
 		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d, want 320", cfg.ScriptTimeoutPerSegmentSeconds)
+	}
+}
+
+func TestLoadReadsResourceConcurrencyConfig(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("RESOURCE_LOCAL_CPU_CONCURRENCY", "6")
+	t.Setenv("RESOURCE_LLM_TEXT_CONCURRENCY", "4")
+	t.Setenv("RESOURCE_TTS_CONCURRENCY", "5")
+	t.Setenv("RESOURCE_IMAGE_GEN_CONCURRENCY", "3")
+	t.Setenv("RESOURCE_VIDEO_GEN_CONCURRENCY", "2")
+	t.Setenv("RESOURCE_VIDEO_RENDER_CONCURRENCY", "2")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.ResourceLocalCPUConcurrency != 6 {
+		t.Fatalf("ResourceLocalCPUConcurrency = %d, want 6", cfg.ResourceLocalCPUConcurrency)
+	}
+	if cfg.ResourceLLMTextConcurrency != 4 {
+		t.Fatalf("ResourceLLMTextConcurrency = %d, want 4", cfg.ResourceLLMTextConcurrency)
+	}
+	if cfg.ResourceTTSConcurrency != 5 {
+		t.Fatalf("ResourceTTSConcurrency = %d, want 5", cfg.ResourceTTSConcurrency)
+	}
+	if cfg.ResourceImageGenConcurrency != 3 {
+		t.Fatalf("ResourceImageGenConcurrency = %d, want 3", cfg.ResourceImageGenConcurrency)
+	}
+	if cfg.ResourceVideoGenConcurrency != 2 {
+		t.Fatalf("ResourceVideoGenConcurrency = %d, want 2", cfg.ResourceVideoGenConcurrency)
+	}
+	if cfg.ResourceVideoRenderConcurrency != 2 {
+		t.Fatalf("ResourceVideoRenderConcurrency = %d, want 2", cfg.ResourceVideoRenderConcurrency)
 	}
 }
 
@@ -333,6 +441,78 @@ func TestLoadFallsBackWhenScriptTimeoutPerSegmentSecondsInvalid(t *testing.T) {
 
 	if cfg.ScriptTimeoutPerSegmentSeconds != 200 {
 		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d, want 200", cfg.ScriptTimeoutPerSegmentSeconds)
+	}
+}
+
+func TestLoadFallsBackWhenDashScopeTextRequestTimeoutSecondsInvalid(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("DASHSCOPE_TEXT_REQUEST_TIMEOUT_SECONDS", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.DashScopeTextRequestTimeoutSeconds != 600 {
+		t.Fatalf("DashScopeTextRequestTimeoutSeconds = %d, want 600", cfg.DashScopeTextRequestTimeoutSeconds)
+	}
+}
+
+func TestLoadFallsBackWhenDashScopeTextRetryConfigInvalid(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("DASHSCOPE_TEXT_MAX_RETRIES", "-1")
+	t.Setenv("DASHSCOPE_TEXT_RETRY_BACKOFF_SECONDS", "bad")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.DashScopeTextMaxRetries != 2 {
+		t.Fatalf("DashScopeTextMaxRetries = %d, want 2", cfg.DashScopeTextMaxRetries)
+	}
+	if cfg.DashScopeTextRetryBackoffSeconds != 2 {
+		t.Fatalf("DashScopeTextRetryBackoffSeconds = %d, want 2", cfg.DashScopeTextRetryBackoffSeconds)
+	}
+}
+
+func TestLoadFallsBackWhenResourceConcurrencyInvalid(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("RESOURCE_LOCAL_CPU_CONCURRENCY", "bad")
+	t.Setenv("RESOURCE_LLM_TEXT_CONCURRENCY", "0")
+	t.Setenv("RESOURCE_TTS_CONCURRENCY", "-1")
+	t.Setenv("RESOURCE_IMAGE_GEN_CONCURRENCY", "")
+	t.Setenv("RESOURCE_VIDEO_GEN_CONCURRENCY", "bad")
+	t.Setenv("RESOURCE_VIDEO_RENDER_CONCURRENCY", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.ResourceLocalCPUConcurrency != 4 {
+		t.Fatalf("ResourceLocalCPUConcurrency = %d, want 4", cfg.ResourceLocalCPUConcurrency)
+	}
+	if cfg.ResourceLLMTextConcurrency != 2 {
+		t.Fatalf("ResourceLLMTextConcurrency = %d, want 2", cfg.ResourceLLMTextConcurrency)
+	}
+	if cfg.ResourceTTSConcurrency != 3 {
+		t.Fatalf("ResourceTTSConcurrency = %d, want 3", cfg.ResourceTTSConcurrency)
+	}
+	if cfg.ResourceImageGenConcurrency != 2 {
+		t.Fatalf("ResourceImageGenConcurrency = %d, want 2", cfg.ResourceImageGenConcurrency)
+	}
+	if cfg.ResourceVideoGenConcurrency != 1 {
+		t.Fatalf("ResourceVideoGenConcurrency = %d, want 1", cfg.ResourceVideoGenConcurrency)
+	}
+	if cfg.ResourceVideoRenderConcurrency != 1 {
+		t.Fatalf("ResourceVideoRenderConcurrency = %d, want 1", cfg.ResourceVideoRenderConcurrency)
 	}
 }
 

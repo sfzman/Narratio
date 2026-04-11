@@ -140,7 +140,7 @@ pending/ready -> skipped
 - 使用固定 workflow builder 生成首版 task DAG
 - 通过 store 的原子接口一次性写入 `job + tasks`
 - 当前实现会在入库成功后把 `job.ID` 投递给后台 runner
-- 后台 runner 串行调用 `scheduler.DispatchOnce(jobID)`，直到 job 进入终态或当前没有 ready task
+- 后台 runner 会循环调用 `scheduler.DispatchOnce(jobID)`，每一轮尽可能并行触发所有已 `ready` 且资源配额允许的 task，直到 job 进入终态或当前没有可派发 task
 
 MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬编码顺序调用。
 
@@ -193,18 +193,24 @@ const (
 - `video_gen`: 1
 - `video_render`: 1
 
+当前代码状态：
+
+- 上述 6 个资源池上限已支持通过环境变量覆盖，见 `docs/deployment.md`
+
 调度规则：
 
 1. 只有所有依赖都 `succeeded` 的 task 才能进入 `ready`
 2. `ready` task 只有在对应资源池有空闲配额时才能启动
 3. task 结束后必须释放资源配额
 4. 调度器不关心具体 API，只关心 task 状态和资源占用
+5. executor 在 `running` 期间可通过 `model.ReportTaskProgress(...)` 上报瞬时进度；scheduler 会把该信息暂存到 `task.output_ref.progress`，供前端轮询展示
+6. `task.output_ref.progress` 只用于运行中观测；task 进入终态时该字段会被清理，避免把临时进度混入最终 artifact 元数据
 
 当前最小实现约束：
 
 - scheduler 第一版先只负责 `pending -> ready` 判定
 - 再提供内存版 `ResourceManager` 做资源配额检查
-- 第二步增加“单次只 dispatch 一个 ready task”的同步执行入口
+- 第二步增加同步执行入口：单轮 `DispatchOnce(jobID)` 会尽量派发当前所有可运行 task
 - 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
 - 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
 - 当前 skeleton 已可让 script task 读取 segmentation / outline / character_sheet 的依赖产物

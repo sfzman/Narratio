@@ -34,9 +34,12 @@ func (f *fakeSchedulerDispatcher) DispatchOnce(
 ) (scheduler.DispatchResult, model.Job, error) {
 	f.jobID = jobID
 	return scheduler.DispatchResult{
-		Dispatched:      true,
-		ExecutedTaskID:  11,
-		ExecutedTaskKey: "outline",
+		Dispatched:          true,
+		ExecutedTaskID:      11,
+		ExecutedTaskKey:     "outline",
+		ExecutedTaskIDs:     []int64{11, 12},
+		ExecutedTaskKeys:    []string{"outline", "character_sheet"},
+		DispatchedTaskCount: 2,
 	}, f.job, nil
 }
 
@@ -63,6 +66,12 @@ func TestDispatchServiceDispatchOnce(t *testing.T) {
 	}
 	if outcome.ExecutedTaskKey != "outline" {
 		t.Fatalf("ExecutedTaskKey = %q", outcome.ExecutedTaskKey)
+	}
+	if outcome.DispatchedTaskCount != 2 {
+		t.Fatalf("DispatchedTaskCount = %d", outcome.DispatchedTaskCount)
+	}
+	if len(outcome.ExecutedTaskKeys) != 2 {
+		t.Fatalf("ExecutedTaskKeys = %#v", outcome.ExecutedTaskKeys)
 	}
 }
 

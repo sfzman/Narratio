@@ -268,6 +268,60 @@ func TestCharacterImageExecutorDefaultsToRealisticStyle(t *testing.T) {
 	}
 }
 
+func TestCharacterImageExecutorReportsProgress(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	executor := NewCharacterImageExecutor(workspaceDir)
+	writer := newArtifactWriter(workspaceDir)
+	if err := writer.WriteJSON(
+		"jobs/job_character_image_progress/character_sheet.json",
+		characterSheetArtifact{
+			Characters: []characterProfileArtifact{
+				{Name: "Lin Qing", ImagePromptFocus: "front view"},
+				{Name: "A-Xuan", ImagePromptFocus: "front view"},
+			},
+		},
+	); err != nil {
+		t.Fatalf("WriteJSON(character_sheet) error = %v", err)
+	}
+
+	reporter := &recordingProgressReporter{}
+	ctx := model.WithTaskProgressReporter(context.Background(), reporter)
+
+	_, err := executor.Execute(
+		ctx,
+		model.Job{PublicID: "job_character_image_progress"},
+		model.Task{Key: "character_image", Type: model.TaskTypeCharacterImage},
+		map[string]model.Task{
+			"character_sheet": {
+				Key: "character_sheet",
+				OutputRef: map[string]any{
+					"artifact_path": "jobs/job_character_image_progress/character_sheet.json",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	progress := reporter.snapshot()
+	if len(progress) < 3 {
+		t.Fatalf("len(progress) = %d, want >= 3", len(progress))
+	}
+	if progress[0].Phase != "generating_character" || progress[0].Current != 1 || progress[0].Total != 2 {
+		t.Fatalf("progress[0] = %#v, want first character progress", progress[0])
+	}
+	if progress[1].Phase != "generating_character" || progress[1].Current != 2 || progress[1].Total != 2 {
+		t.Fatalf("progress[1] = %#v, want second character progress", progress[1])
+	}
+	last := progress[len(progress)-1]
+	if last.Phase != "writing_artifact" {
+		t.Fatalf("last progress phase = %#v, want writing_artifact", last.Phase)
+	}
+}
+
 func readCharacterImageArtifact(
 	t *testing.T,
 	workspaceDir string,

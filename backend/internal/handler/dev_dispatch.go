@@ -31,11 +31,14 @@ func (h Handlers) dispatchOnce(c *gin.Context) {
 	}
 
 	success(c, http.StatusOK, gin.H{
-		"job_id":            result.Job.PublicID,
-		"status":            result.Job.Status,
-		"progress":          result.Job.Progress,
-		"dispatched":        result.Dispatched,
-		"executed_task_id":  result.ExecutedTaskID,
-		"executed_task_key": result.ExecutedTaskKey,
+		"job_id":                result.Job.PublicID,
+		"status":                result.Job.Status,
+		"progress":              result.Job.Progress,
+		"dispatched":            result.Dispatched,
+		"executed_task_id":      result.ExecutedTaskID,
+		"executed_task_key":     result.ExecutedTaskKey,
+		"executed_task_ids":     result.ExecutedTaskIDs,
+		"executed_task_keys":    result.ExecutedTaskKeys,
+		"dispatched_task_count": result.DispatchedTaskCount,
 	})
 }

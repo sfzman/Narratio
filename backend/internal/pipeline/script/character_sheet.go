@@ -50,12 +50,20 @@ func (e *CharacterSheetExecutor) Execute(
 
 	artifactPath := fmt.Sprintf("jobs/%s/character_sheet.json", job.PublicID)
 	e.logExecutionStart(job, task)
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "requesting_text",
+		Message: "正在生成人物表",
+	})
 
 	output, response, preview, err := e.generateOutput(ctx, article)
 	if err != nil {
 		e.logGenerationError("character sheet text generation failed", job, task, err)
 		return task, err
 	}
+	_ = model.ReportTaskProgress(ctx, model.TaskProgress{
+		Phase:   "writing_artifact",
+		Message: "正在写入人物表产物",
+	})
 	if err := e.artifacts.WriteJSON(artifactPath, output); err != nil {
 		return task, fmt.Errorf("write character sheet artifact: %w", err)
 	}

@@ -71,3 +71,5 @@ model → store → pipeline/* → scheduler → app/jobs → handler
 - [x] handler 层 skeleton
 - [x] React 前端基础页面
 - [ ] 端到端集成测试
+- [ ] background runner 支持跨 job 并发 worker，避免多个 job 串行推进
+- [ ] scheduler 在上游失败时补齐下游 `skipped / fail-fast` 语义

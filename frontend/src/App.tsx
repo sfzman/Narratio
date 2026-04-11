@@ -161,12 +161,15 @@ const apiBaseUrl = (
 ).replace(/\/$/, "");
 
 const taskOrder: Record<string, number> = {
-  outline: 1,
-  character_sheet: 2,
-  script: 3,
-  tts: 4,
-  image: 5,
-  video: 6,
+  segmentation: 1,
+  outline: 2,
+  character_sheet: 3,
+  script: 4,
+  tts: 5,
+  character_image: 6,
+  image: 7,
+  shot_video: 8,
+  video: 9,
 };
 
 function App() {
@@ -696,6 +699,7 @@ function App() {
                   <p className="task-meta">
                     {task.type} · {task.resource_key} · attempt {task.attempt}/{task.max_attempts}
                   </p>
+                  {renderTaskProgress(task)}
                   <p className="task-deps">
                     depends_on: {task.depends_on.length > 0 ? task.depends_on.join(", ") : "none"}
                   </p>
@@ -808,6 +812,42 @@ function compareTaskDetail(a: TaskDetail, b: TaskDetail) {
   }
 
   return a.id - b.id;
+}
+
+function renderTaskProgress(task: TaskDetail) {
+  const progress = task.output_ref.progress as
+    | {
+        phase?: string;
+        message?: string;
+        current?: number;
+        total?: number;
+        unit?: string;
+      }
+    | undefined;
+
+  if (!progress || typeof progress !== "object") {
+    return null;
+  }
+
+  const message =
+    typeof progress.message === "string" && progress.message.trim() !== ""
+      ? progress.message
+      : typeof progress.phase === "string"
+        ? progress.phase
+        : "";
+  const hasCounter =
+    typeof progress.current === "number" && typeof progress.total === "number" && progress.total > 0;
+
+  if (!message && !hasCounter) {
+    return null;
+  }
+
+  return (
+    <p className="task-progress">
+      <span>进度:</span> {message || "running"}
+      {hasCounter ? ` (${progress.current}/${progress.total}${progress.unit ? ` ${progress.unit}` : ""})` : ""}
+    </p>
+  );
 }
 
 function buildWorkflowSpotlight(job: JobStatusResponse | null) {

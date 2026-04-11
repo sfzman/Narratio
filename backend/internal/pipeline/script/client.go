@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 var (
@@ -114,12 +118,22 @@ type HTTPTextClient struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	maxRetries int
+	backoff    time.Duration
+	sleep      func(context.Context, time.Duration) error
+}
+
+type HTTPTextClientOptions struct {
+	MaxRetries int
+	Backoff    time.Duration
+	Sleep      func(context.Context, time.Duration) error
 }
 
 func NewHTTPTextClient(
 	baseURL string,
 	apiKey string,
 	httpClient *http.Client,
+	options ...HTTPTextClientOptions,
 ) (*HTTPTextClient, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, fmt.Errorf("qwen text base url is empty")
@@ -134,10 +148,25 @@ func NewHTTPTextClient(
 		return nil, ErrHTTPClientTimeoutNotSet
 	}
 
+	opts := HTTPTextClientOptions{
+		MaxRetries: 0,
+		Backoff:    0,
+		Sleep:      sleepWithContext,
+	}
+	if len(options) > 0 {
+		opts = options[0]
+		if opts.Sleep == nil {
+			opts.Sleep = sleepWithContext
+		}
+	}
+
 	return &HTTPTextClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
 		httpClient: httpClient,
+		maxRetries: max(opts.MaxRetries, 0),
+		backoff:    opts.Backoff,
+		sleep:      opts.Sleep,
 	}, nil
 }
 
@@ -159,23 +188,55 @@ func (c *HTTPTextClient) Generate(
 		return TextResponse{}, err
 	}
 
-	httpResponse, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		return TextResponse{}, fmt.Errorf("send qwen text request: %w", err)
-	}
-	defer httpResponse.Body.Close()
+	startedAt := time.Now()
+	slog.Info("dashscope text request sending",
+		"url", httpRequest.URL.String(),
+		"model", request.Model,
+		"message_count", len(request.Messages),
+		"max_tokens", request.MaxTokens,
+		"http_timeout_seconds", int(c.httpClient.Timeout.Seconds()),
+	)
+	for attempt := 0; ; attempt++ {
+		httpResponse, err := c.httpClient.Do(httpRequest)
+		if err == nil {
+			slog.Info("dashscope text response received",
+				"url", httpRequest.URL.String(),
+				"model", request.Model,
+				"status_code", httpResponse.StatusCode,
+				"duration_ms", time.Since(startedAt).Milliseconds(),
+				"attempt", attempt+1,
+			)
+			if httpResponse.StatusCode < http.StatusOK ||
+				httpResponse.StatusCode >= http.StatusMultipleChoices {
+				statusErr := newStatusError(httpResponse)
+				httpResponse.Body.Close()
+				if retryErr := c.retryIfNeeded(ctx, request, httpRequest.URL.String(), attempt, statusErr); retryErr != nil {
+					return TextResponse{}, retryErr
+				}
+				httpRequest, err = c.newRequest(ctx, body)
+				if err != nil {
+					return TextResponse{}, err
+				}
+				continue
+			}
 
-	if httpResponse.StatusCode < http.StatusOK ||
-		httpResponse.StatusCode >= http.StatusMultipleChoices {
-		return TextResponse{}, newStatusError(httpResponse)
-	}
+			response, decodeErr := decodeTextResponse(httpResponse.Body)
+			httpResponse.Body.Close()
+			if decodeErr != nil {
+				return TextResponse{}, decodeErr
+			}
+			return response, nil
+		}
 
-	response, err := decodeTextResponse(httpResponse.Body)
-	if err != nil {
-		return TextResponse{}, err
+		sendErr := fmt.Errorf("send qwen text request: %w", err)
+		if retryErr := c.retryIfNeeded(ctx, request, httpRequest.URL.String(), attempt, sendErr); retryErr != nil {
+			return TextResponse{}, retryErr
+		}
+		httpRequest, err = c.newRequest(ctx, body)
+		if err != nil {
+			return TextResponse{}, err
+		}
 	}
-
-	return response, nil
 }
 
 func marshalTextRequest(request TextRequest) ([]byte, error) {
@@ -230,6 +291,83 @@ func decodeTextResponse(body io.Reader) (TextResponse, error) {
 	}
 
 	return response, nil
+}
+
+func (c *HTTPTextClient) retryIfNeeded(
+	ctx context.Context,
+	request TextRequest,
+	endpoint string,
+	attempt int,
+	err error,
+) error {
+	if !isRetryableTextError(err) || attempt >= c.maxRetries {
+		return err
+	}
+
+	backoff := c.retryBackoff(attempt)
+	slog.Warn("dashscope text request retry scheduled",
+		"url", endpoint,
+		"model", request.Model,
+		"attempt", attempt+1,
+		"next_attempt", attempt+2,
+		"backoff_ms", backoff.Milliseconds(),
+		"error", err,
+	)
+	if sleepErr := c.sleep(ctx, backoff); sleepErr != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *HTTPTextClient) retryBackoff(attempt int) time.Duration {
+	if c.backoff <= 0 {
+		return 0
+	}
+
+	multiplier := math.Pow(2, float64(attempt))
+	return time.Duration(multiplier) * c.backoff
+}
+
+func isRetryableTextError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Retryable()
+	}
+
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func sleepWithContext(ctx context.Context, duration time.Duration) error {
+	if duration <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 type StatusError struct {
