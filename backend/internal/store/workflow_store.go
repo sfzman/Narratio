@@ -8,4 +8,5 @@ import (
 
 type WorkflowStore interface {
 	InitializeJob(ctx context.Context, job *model.Job, tasks []model.Task) ([]model.Task, error)
+	DeleteJobWorkflow(ctx context.Context, jobID int64) error
 }

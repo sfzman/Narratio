@@ -36,6 +36,7 @@
 | 1002 | 任务不存在 |
 | 1003 | 任务尚未完成，结果不可下载 |
 | 1004 | 任务当前状态不允许该操作 |
+| 1005 | artifact 不存在或不可读取 |
 | 5001 | 外部 AI 服务调用失败 |
 | 5002 | FFmpeg 合成失败 |
 | 5003 | 服务内部错误 |
@@ -49,6 +50,7 @@
 **Request Body**
 ```json
 {
+  "name": "山村怪谈开篇",
   "article": "这是一篇文章内容...",
   "options": {
     "voice_id": "male_calm",
@@ -61,6 +63,7 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
+| name | string | ❌ | 任务名称；若不传，后端默认取 `article` 前 10 个 rune |
 | article | string | ✅ | 文章内容，1~10000 字 |
 | options.voice_id | string | ❌ | TTS 音色 preset ID，默认 `male_calm` |
 | options.image_style | string | ❌ | 图像风格，默认 `realistic` |
@@ -73,6 +76,7 @@
   "code": 0,
   "data": {
     "job_id": "job_abc123",
+    "name": "山村怪谈开篇",
     "status": "queued",
     "created_at": "2024-01-15T10:30:00Z",
     "estimated_seconds": 120
@@ -85,10 +89,41 @@
 - 当前实现会在创建成功后自动启动后台调度
 - 前端不需要再依赖手动点击 `Dispatch Once` 才能推进 job
 - 当前接口不再接收 `language` 字段；整个生成链路默认按中文内容处理
+- `name` 若未传或仅包含空白，后端会自动取规范化后 `article` 的前 10 个 rune 作为任务名称
 - `options.aspect_ratio` 若未传，后端会规范化为 `9:16`
 - `options.video_count` 若未传，后端会规范化为 `12`
 
 ---
+
+---
+
+### GET /api/v1/jobs — 查询任务列表
+
+用于前端左侧 project list 展示，当前只返回最小摘要字段，不展开 task 明细。
+
+**Response 200**
+```json
+{
+  "code": 0,
+  "data": {
+    "jobs": [
+      {
+        "job_id": "job_abc123",
+        "name": "山村怪谈开篇",
+        "status": "running",
+        "progress": 62,
+        "created_at": "2024-01-15T10:30:00Z",
+        "updated_at": "2024-01-15T10:31:30Z"
+      }
+    ]
+  }
+}
+```
+
+补充语义：
+
+- 当前默认按 `updated_at DESC` 返回，最近有变化的 job 排在前面
+- 当前不支持分页、筛选和搜索；若后续左侧列表规模变大，再单独扩展契约
 
 ### GET /api/v1/jobs/:job_id — 查询任务状态
 
@@ -98,6 +133,7 @@
   "code": 0,
   "data": {
     "job_id": "job_abc123",
+    "name": "山村怪谈开篇",
     "status": "running",
     "progress": 62,
     "created_at": "2024-01-15T10:30:00Z",
@@ -231,6 +267,82 @@ Accept-Ranges: bytes
 
 ---
 
+### GET /api/v1/jobs/:job_id/artifact — 读取任务 artifact
+
+用于前端读取当前 job 工作目录下的结构化 artifact，供 inspector 做真实内容预览。
+
+当前只支持文本型 artifact：
+
+- `.json`
+- `.md`
+- `.txt`
+- `.srt`
+
+不支持图片、音频、视频等二进制文件；这类内容后续通过单独媒体接口提供。
+
+**Query**
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| path | string | ✅ | 相对 `WORKSPACE_DIR` 的 artifact 路径；必须属于当前 job，例如 `jobs/job_abc123/script/segment_000.json` |
+
+**文件响应示例（JSON）**
+```json
+{
+  "code": 0,
+  "data": {
+    "path": "jobs/job_abc123/script/segment_000.json",
+    "kind": "json",
+    "content_type": "application/json",
+    "json": {
+      "segment_index": 0,
+      "shots": []
+    }
+  }
+}
+```
+
+**文件响应示例（Text）**
+```json
+{
+  "code": 0,
+  "data": {
+    "path": "jobs/job_abc123/notes.md",
+    "kind": "text",
+    "content_type": "text/markdown; charset=utf-8",
+    "text": "# Example"
+  }
+}
+```
+
+**目录响应示例**
+```json
+{
+  "code": 0,
+  "data": {
+    "path": "jobs/job_abc123/script",
+    "kind": "directory",
+    "entries": [
+      {
+        "name": "segment_000.json",
+        "path": "jobs/job_abc123/script/segment_000.json",
+        "kind": "json"
+      }
+    ]
+  }
+}
+```
+
+**行为说明**
+
+- `path` 必须落在当前 job 的目录前缀 `jobs/{job_id}/` 下，防止跨 job 或越界读取
+- 对 JSON 文件，服务端会先解析再返回 `json` 字段；若 JSON 非法，返回 5003
+- 对文本文件，服务端返回 `text` 字段
+- 对目录，当前只返回一层子项，不递归展开
+- 当前只用于 inspector / 调试预览，不提供批量下载能力
+
+---
+
 ### DELETE /api/v1/jobs/:job_id — 取消/删除任务
 
 取消进行中的任务，或删除已完成任务的数据。
@@ -251,13 +363,14 @@ Accept-Ranges: bytes
 
 - `queued` 任务取消后直接变为 `cancelled`
 - `running` 任务取消后先返回 `cancelling`，前端继续轮询，直到状态变为 `cancelled`
-- 当前版本尚未实现“已完成任务删除产物文件”；因此当前 `deleted` 固定为 `false`
+- `completed` / `failed` / `cancelled` 这类终态 job，当前会执行真实删除，返回 `deleted=true`
+- 真实删除会移除 job/task 元数据，并尽量清理 `WORKSPACE_DIR/jobs/{job_id}` 目录
 
 ---
 
 ### POST /api/v1/jobs/:job_id/dispatch-once — 开发态手动推进一次调度
 
-仅用于 skeleton / 开发调试阶段。每次请求最多推进一个 ready task。
+仅用于 skeleton / 开发调试阶段。每次请求会在当前资源允许范围内，尽量推进该 job 下所有已 ready 的 task。
 
 **Response 200**
 ```json
@@ -277,6 +390,7 @@ Accept-Ranges: bytes
 补充语义：
 
 - 若该 job 当前已被后台 runner 持有，本接口返回 `dispatched=false`
+- `executed_task_id / executed_task_key` 只代表本轮首个被触发的 task；若同轮并发触发了多个 task，完整结果以后续 `GET /jobs/:job_id/tasks` 为准
 
 ---
 
@@ -342,6 +456,7 @@ Accept-Ranges: bytes
 当前已实现接口：
 
 - `POST /api/v1/jobs` 已实现
+- `GET /api/v1/jobs` 已实现，返回最小 job 列表摘要
 - `GET /api/v1/voices` 已实现，返回内置 narration voice preset 列表
 - `GET /api/v1/jobs/:job_id` 已实现，返回 job 状态和 task 聚合统计
 - `GET /api/v1/jobs/:job_id/tasks` 已实现，返回 task 明细

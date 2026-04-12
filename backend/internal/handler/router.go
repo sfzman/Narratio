@@ -23,6 +23,7 @@ type JobCanceler interface {
 }
 
 type JobReader interface {
+	ListJobs(ctx context.Context) ([]model.Job, error)
 	GetJobByPublicID(ctx context.Context, publicID string) (model.Job, error)
 }
 
@@ -85,8 +86,10 @@ func NewRouter(
 	api.GET("/health", h.healthCheck)
 	api.GET("/voices", h.listVoices)
 	api.POST("/jobs", h.createJob)
+	api.GET("/jobs", h.listJobs)
 	api.GET("/jobs/:job_id", h.getJob)
 	api.GET("/jobs/:job_id/tasks", h.getJobTasks)
+	api.GET("/jobs/:job_id/artifact", h.getJobArtifact)
 	api.GET("/jobs/:job_id/download", h.downloadJobVideo)
 	api.DELETE("/jobs/:job_id", h.cancelJob)
 	api.POST("/jobs/:job_id/dispatch-once", h.dispatchOnce)

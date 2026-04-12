@@ -20,6 +20,7 @@
 | 实现任务生命周期 / Task DAG / 调度 | `docs/job-lifecycle.md` |
 | 编写 Go 代码 | `docs/coding-standards.md` |
 | 编写测试 | `docs/testing.md` |
+| 前端产品界面接入 | `docs/frontend.md` |
 | 部署 / 运行项目 | `docs/deployment.md` |
 
 ## 分层架构（严格执行，不得违反）

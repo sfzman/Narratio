@@ -190,7 +190,7 @@ func (c *HTTPClient) buildBearerToken() (string, error) {
 		return "", fmt.Errorf("marshal jwt header: %w", err)
 	}
 	payloadJSON, err := json.Marshal(map[string]int64{
-		"iat": now.Unix(),
+		// "iat": now.Unix(), // 如果传了反而会因为服务器和客户端时间不一致导致部分 JWT 库校验失败，暂时先不传
 		"exp": now.Add(c.tokenTTL).Unix(),
 	})
 	if err != nil {

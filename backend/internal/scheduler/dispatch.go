@@ -181,64 +181,88 @@ func executeDispatchCandidates(
 
 	go func() {
 		var wg sync.WaitGroup
-		for _, candidate := range selected {
-			wg.Add(1)
-			go func(candidate dispatchCandidate) {
-				defer wg.Done()
-				defer resources.Release(candidate.task.ResourceKey)
-				defer func() {
-					if recovered := recover(); recovered != nil {
-						results <- dispatchOutcome{
-							index:     candidate.index,
-							task:      candidate.task,
-							panicInfo: recovered,
-						}
-					}
-				}()
-
-				slog.Info("executor triggered",
-					"job_id", job.ID,
-					"job_public_id", job.PublicID,
-					"task_id", candidate.task.ID,
-					"task_key", candidate.task.Key,
-					"task_type", candidate.task.Type,
-					"resource_key", candidate.task.ResourceKey,
-					"attempt", candidate.task.Attempt,
-				)
-				parentCtx := ctx
-				if candidate.taskCtx != nil {
-					parentCtx = candidate.taskCtx
-				}
-				executionCtx, cancel := withTaskExecutionTimeout(
-					parentCtx,
-					candidate.task,
-					candidate.dependencies,
-					scriptTimeoutPerSegment,
-					shotVideoTimeoutPerShot,
-					videoRenderTimeout,
-				)
-				executedTask, err := candidate.executor.Execute(
-					executionCtx,
-					job,
-					candidate.task,
-					candidate.dependencies,
-				)
-				ctxErr := executionCtx.Err()
-				cancel()
-				results <- dispatchOutcome{
-					index:  candidate.index,
-					task:   mergeExecutedTask(candidate.task, executedTask),
-					err:    err,
-					ctxErr: ctxErr,
-				}
-			}(candidate)
-		}
+		startDispatchCandidates(
+			ctx,
+			job,
+			selected,
+			resources,
+			scriptTimeoutPerSegment,
+			shotVideoTimeoutPerShot,
+			videoRenderTimeout,
+			results,
+			&wg,
+		)
 
 		wg.Wait()
 		close(results)
 	}()
 
 	return results
+}
+
+func startDispatchCandidates(
+	ctx context.Context,
+	job model.Job,
+	selected []dispatchCandidate,
+	resources ResourceManager,
+	scriptTimeoutPerSegment time.Duration,
+	shotVideoTimeoutPerShot time.Duration,
+	videoRenderTimeout time.Duration,
+	results chan<- dispatchOutcome,
+	wg *sync.WaitGroup,
+) {
+	for _, candidate := range selected {
+		wg.Add(1)
+		go func(candidate dispatchCandidate) {
+			defer wg.Done()
+			defer resources.Release(candidate.task.ResourceKey)
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					results <- dispatchOutcome{
+						index:     candidate.index,
+						task:      candidate.task,
+						panicInfo: recovered,
+					}
+				}
+			}()
+
+			slog.Info("executor triggered",
+				"job_id", job.ID,
+				"job_public_id", job.PublicID,
+				"task_id", candidate.task.ID,
+				"task_key", candidate.task.Key,
+				"task_type", candidate.task.Type,
+				"resource_key", candidate.task.ResourceKey,
+				"attempt", candidate.task.Attempt,
+			)
+			parentCtx := ctx
+			if candidate.taskCtx != nil {
+				parentCtx = candidate.taskCtx
+			}
+			executionCtx, cancel := withTaskExecutionTimeout(
+				parentCtx,
+				candidate.task,
+				candidate.dependencies,
+				scriptTimeoutPerSegment,
+				shotVideoTimeoutPerShot,
+				videoRenderTimeout,
+			)
+			executedTask, err := candidate.executor.Execute(
+				executionCtx,
+				job,
+				candidate.task,
+				candidate.dependencies,
+			)
+			ctxErr := executionCtx.Err()
+			cancel()
+			results <- dispatchOutcome{
+				index:  candidate.index,
+				task:   mergeExecutedTask(candidate.task, executedTask),
+				err:    err,
+				ctxErr: ctxErr,
+			}
+		}(candidate)
+	}
 }
 
 func collectDispatchOutcomes(results <-chan dispatchOutcome) []dispatchOutcome {

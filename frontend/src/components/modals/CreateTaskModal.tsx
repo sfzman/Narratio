@@ -1,21 +1,48 @@
 import React from 'react';
-import { X, Play, Info, ChevronDown, Monitor, Smartphone, Type, Image as ImageIcon, Volume2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../../lib/utils';
-import { VOICE_PRESETS, IMAGE_STYLES } from '../../constants/workflow';
+import {X, Play, Info, ChevronDown, Monitor, Smartphone, Type, Image as ImageIcon, Volume2, FolderPen} from 'lucide-react';
+import {motion, AnimatePresence} from 'motion/react';
+import {VOICE_PRESETS, IMAGE_STYLES} from '../../constants/workflow';
+import type {CreateTaskParams} from '../../types/workflow';
+import {cn} from '../../lib/utils';
 
 interface CreateTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (params: any) => void;
+  onCreate: (params: CreateTaskParams) => Promise<void> | void;
+  submitting?: boolean;
+  error?: string | null;
 }
 
-const CreateTaskModal = ({ isOpen, onClose, onCreate }: CreateTaskModalProps) => {
+const DEFAULT_VOICE_ID = VOICE_PRESETS[0]?.id ?? 'male_calm';
+const DEFAULT_IMAGE_STYLE = IMAGE_STYLES[0]?.id ?? 'realistic';
+
+const CreateTaskModal = ({
+  isOpen,
+  onClose,
+  onCreate,
+  submitting = false,
+  error = null,
+}: CreateTaskModalProps) => {
+  const [name, setName] = React.useState('');
   const [article, setArticle] = React.useState('');
-  const [voice, setVoice] = React.useState(VOICE_PRESETS[0].id);
-  const [style, setStyle] = React.useState(IMAGE_STYLES[0].id);
+  const [voicePreset, setVoicePreset] = React.useState(DEFAULT_VOICE_ID);
+  const [imageStyle, setImageStyle] = React.useState(DEFAULT_IMAGE_STYLE);
   const [aspectRatio, setAspectRatio] = React.useState<'16:9' | '9:16'>('16:9');
   const [videoCount, setVideoCount] = React.useState(12);
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    setName('');
+    setArticle('');
+    setVoicePreset(DEFAULT_VOICE_ID);
+    setImageStyle(DEFAULT_IMAGE_STYLE);
+    setAspectRatio('16:9');
+    setVideoCount(12);
+  }, [isOpen]);
+
+  const articleEmpty = article.trim() === '';
 
   if (!isOpen) return null;
 
@@ -48,6 +75,20 @@ const CreateTaskModal = ({ isOpen, onClose, onCreate }: CreateTaskModalProps) =>
           </div>
 
           <div className="p-8 space-y-8 max-h-[70vh] overflow-y-auto">
+            {/* Name Input */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-widest">
+                <FolderPen className="w-3.5 h-3.5" />
+                <span>Project Name</span>
+              </div>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Optional. Defaults to the first 10 characters of the article."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder:text-slate-700 focus:outline-none focus:border-brand-cyan/50 transition-colors"
+              />
+            </div>
+
             {/* Article Input */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-widest">
@@ -70,9 +111,9 @@ const CreateTaskModal = ({ isOpen, onClose, onCreate }: CreateTaskModalProps) =>
                   <span>Voice Preset</span>
                 </div>
                 <div className="relative">
-                  <select 
-                    value={voice}
-                    onChange={(e) => setVoice(e.target.value)}
+                  <select
+                    value={voicePreset}
+                    onChange={(e) => setVoicePreset(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 appearance-none focus:outline-none focus:border-brand-cyan/50 transition-colors"
                   >
                     {VOICE_PRESETS.map(v => (
@@ -89,21 +130,17 @@ const CreateTaskModal = ({ isOpen, onClose, onCreate }: CreateTaskModalProps) =>
                   <ImageIcon className="w-3.5 h-3.5" />
                   <span>Visual Style</span>
                 </div>
-                <div className="flex gap-2">
-                  {IMAGE_STYLES.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => setStyle(s.id)}
-                      className={cn(
-                        "flex-1 px-3 py-2 rounded-lg text-[10px] font-bold tracking-widest transition-all border",
-                        style === s.id 
-                          ? "bg-brand-cyan/10 border-brand-cyan text-brand-cyan" 
-                          : "bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-700"
-                      )}
-                    >
-                      {s.name.toUpperCase()}
-                    </button>
-                  ))}
+                <div className="relative">
+                  <select
+                    value={imageStyle}
+                    onChange={(e) => setImageStyle(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 appearance-none focus:outline-none focus:border-brand-cyan/50 transition-colors"
+                  >
+                    {IMAGE_STYLES.map((style) => (
+                      <option key={style.id} value={style.id}>{style.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
                 </div>
               </div>
             </div>
@@ -174,17 +211,31 @@ const CreateTaskModal = ({ isOpen, onClose, onCreate }: CreateTaskModalProps) =>
 
           {/* Footer */}
           <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex items-center justify-end gap-4">
+            {error && (
+              <div className="mr-auto max-w-md text-xs text-rose-400">
+                {error}
+              </div>
+            )}
             <button 
               onClick={onClose}
+              disabled={submitting}
               className="px-6 py-2 text-xs font-bold tracking-widest text-slate-500 hover:text-slate-300 transition-colors"
             >
               CANCEL
             </button>
-            <button 
-              onClick={() => onCreate({ article, voice, style, aspectRatio, videoCount })}
-              className="bg-brand-cyan hover:bg-cyan-400 text-slate-950 px-8 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center gap-2"
+            <button
+              disabled={submitting || articleEmpty}
+              onClick={() => onCreate({
+                name: name.trim() || undefined,
+                article,
+                voicePreset,
+                imageStyle,
+                aspectRatio,
+                videoCount,
+              })}
+              className="bg-brand-cyan hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400 disabled:shadow-none text-slate-950 px-8 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center gap-2"
             >
-              START TASK
+              {submitting ? 'CREATING...' : 'START TASK'}
               <Play className="w-4 h-4 fill-current" />
             </button>
           </div>

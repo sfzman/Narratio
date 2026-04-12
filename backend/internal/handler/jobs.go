@@ -3,12 +3,14 @@ package handler
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sfzman/Narratio/backend/internal/model"
 )
 
 type createJobRequest struct {
+	Name    string              `json:"name"`
 	Article string              `json:"article"`
 	Options createRenderOptions `json:"options"`
 }
@@ -45,6 +47,7 @@ func (h Handlers) createJob(c *gin.Context) {
 
 	success(c, http.StatusAccepted, gin.H{
 		"job_id":            job.PublicID,
+		"name":              jobDisplayName(job),
 		"status":            job.Status,
 		"created_at":        job.CreatedAt,
 		"estimated_seconds": estimatedSeconds(),
@@ -68,6 +71,7 @@ func validateCreateJobRequest(request createJobRequest) (model.JobSpec, error) {
 	}
 
 	return model.JobSpec{
+		Name:    strings.TrimSpace(request.Name),
 		Article: article,
 		Options: model.RenderOptions{
 			VoiceID:     strings.TrimSpace(request.Options.VoiceID),
@@ -86,4 +90,21 @@ func (e invalidArticleError) Error() string {
 
 func errInvalidArticle(message string) error {
 	return invalidArticleError(message)
+}
+
+func jobDisplayName(job model.Job) string {
+	name := strings.TrimSpace(job.Spec.Name)
+	if name != "" {
+		return name
+	}
+
+	article := strings.TrimSpace(job.Spec.Article)
+	if article == "" {
+		return job.PublicID
+	}
+	if utf8.RuneCountInString(article) <= 10 {
+		return article
+	}
+
+	return string([]rune(article)[:10])
 }

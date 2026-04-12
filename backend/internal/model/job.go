@@ -21,6 +21,7 @@ type RenderOptions struct {
 }
 
 type JobSpec struct {
+	Name    string        `json:"name"`
 	Article string        `json:"article"`
 	Options RenderOptions `json:"options"`
 }

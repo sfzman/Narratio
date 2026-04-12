@@ -24,6 +24,7 @@ func TestCreateJobAndGetByPublicID(t *testing.T) {
 		Status:   model.JobStatusQueued,
 		Progress: 5,
 		Spec: model.JobSpec{
+			Name:    "测试任务",
 			Article: "test article",
 			Options: model.RenderOptions{
 				VoiceID:    "default",
@@ -55,9 +56,66 @@ func TestCreateJobAndGetByPublicID(t *testing.T) {
 	if got.Spec.Options.VoiceID != "default" {
 		t.Fatalf("GetJobByPublicID() voice_id = %q, want %q", got.Spec.Options.VoiceID, "default")
 	}
+	if got.Spec.Name != "测试任务" {
+		t.Fatalf("GetJobByPublicID() name = %q, want %q", got.Spec.Name, "测试任务")
+	}
 
 	if len(got.Warnings) != 1 || got.Warnings[0] != "trimmed" {
 		t.Fatalf("GetJobByPublicID() warnings = %#v, want %#v", got.Warnings, []string{"trimmed"})
+	}
+}
+
+func TestListJobsOrdersByUpdatedAtDesc(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	now := time.Date(2026, 4, 12, 10, 0, 0, 0, time.UTC)
+	jobs := []model.Job{
+		{
+			PublicID: "job_old",
+			Token:    "token_old",
+			Status:   model.JobStatusQueued,
+			Spec: model.JobSpec{
+				Name:    "旧任务",
+				Article: "old",
+			},
+			Warnings:  []string{},
+			CreatedAt: now.Add(-2 * time.Hour),
+			UpdatedAt: now.Add(-1 * time.Hour),
+		},
+		{
+			PublicID: "job_new",
+			Token:    "token_new",
+			Status:   model.JobStatusRunning,
+			Progress: 55,
+			Spec: model.JobSpec{
+				Name:    "新任务",
+				Article: "new",
+			},
+			Warnings:  []string{},
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now,
+		},
+	}
+
+	for i := range jobs {
+		if err := store.CreateJob(context.Background(), &jobs[i]); err != nil {
+			t.Fatalf("CreateJob() error = %v", err)
+		}
+	}
+
+	got, err := store.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListJobs() len = %d, want 2", len(got))
+	}
+	if got[0].PublicID != "job_new" {
+		t.Fatalf("ListJobs()[0].PublicID = %q, want %q", got[0].PublicID, "job_new")
+	}
+	if got[0].Spec.Name != "新任务" {
+		t.Fatalf("ListJobs()[0].Spec.Name = %q, want %q", got[0].Spec.Name, "新任务")
 	}
 }
 

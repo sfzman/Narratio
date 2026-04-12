@@ -14,6 +14,7 @@ type fakeDispatchJobStore struct {
 }
 
 func (f *fakeDispatchJobStore) CreateJob(context.Context, *model.Job) error { return nil }
+func (f *fakeDispatchJobStore) ListJobs(context.Context) ([]model.Job, error) { return nil, nil }
 func (f *fakeDispatchJobStore) GetJob(context.Context, int64) (model.Job, error) {
 	return model.Job{}, nil
 }

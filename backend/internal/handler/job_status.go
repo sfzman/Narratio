@@ -52,6 +52,7 @@ func (h Handlers) getJob(c *gin.Context) {
 
 	success(c, http.StatusOK, gin.H{
 		"job_id":       job.PublicID,
+		"name":         jobDisplayName(job),
 		"status":       job.Status,
 		"progress":     job.Progress,
 		"created_at":   job.CreatedAt,

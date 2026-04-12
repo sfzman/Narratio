@@ -18,14 +18,23 @@ export type JobStatus =
 export interface WorkflowNode {
   id: string;
   type: string;
+  taskType?: string;
   label: string;
   chineseLabel: string;
   status: NodeStatus;
   progress?: number;
   summary?: string;
   updatedAt: string;
+  resourceKey?: string;
   dependencies: string[];
-  artifacts?: any;
+  attempt?: number;
+  maxAttempts?: number;
+  payload?: Record<string, unknown>;
+  artifacts?: Record<string, unknown>;
+  error?: {
+    code?: string;
+    message: string;
+  } | null;
 }
 
 export interface Project {
@@ -37,6 +46,7 @@ export interface Project {
 }
 
 export interface CreateTaskParams {
+  name?: string;
   article: string;
   voicePreset: string;
   imageStyle: string;

@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
 	"github.com/sfzman/Narratio/backend/internal/scheduler"
@@ -42,10 +45,11 @@ type workflowJobStore interface {
 }
 
 type Service struct {
-	store  workflowJobStore
-	runner JobRunner
-	clock  Clock
-	log    *slog.Logger
+	store        workflowJobStore
+	runner       JobRunner
+	clock        Clock
+	log          *slog.Logger
+	workspaceDir string
 }
 
 const defaultVideoCount = 2
@@ -57,11 +61,16 @@ func NewService(workflowStore workflowJobStore, runner ...JobRunner) *Service {
 	}
 
 	return &Service{
-		store:  workflowStore,
-		runner: jobRunner,
-		clock:  realClock{},
-		log:    slog.Default(),
+		store:        workflowStore,
+		runner:       jobRunner,
+		clock:        realClock{},
+		log:          slog.Default(),
+		workspaceDir: "",
 	}
+}
+
+func (s *Service) SetWorkspaceDir(workspaceDir string) {
+	s.workspaceDir = strings.TrimSpace(workspaceDir)
 }
 
 type CancelOutcome struct {
@@ -136,10 +145,15 @@ func (s *Service) CancelJob(ctx context.Context, publicID string) (CancelOutcome
 	}
 
 	if isTerminalJobStatus(job.Status) {
+		if err := s.store.DeleteJobWorkflow(ctx, job.ID); err != nil {
+			return CancelOutcome{}, fmt.Errorf("delete job workflow: %w", err)
+		}
+		s.deleteWorkspaceArtifacts(job.PublicID)
+
 		return CancelOutcome{
 			Job:       job,
 			Cancelled: false,
-			Deleted:   false,
+			Deleted:   true,
 		}, nil
 	}
 
@@ -183,6 +197,7 @@ func (s *Service) CancelJob(ctx context.Context, publicID string) (CancelOutcome
 }
 
 func normalizeSpec(spec model.JobSpec) model.JobSpec {
+	spec.Name = strings.TrimSpace(spec.Name)
 	spec.Article = strings.TrimSpace(spec.Article)
 	spec.Options.VoiceID = strings.TrimSpace(spec.Options.VoiceID)
 	spec.Options.ImageStyle = strings.TrimSpace(spec.Options.ImageStyle)
@@ -191,6 +206,9 @@ func normalizeSpec(spec model.JobSpec) model.JobSpec {
 	).Normalized()
 
 	spec.Options.VoiceID = model.NormalizeVoicePresetID(spec.Options.VoiceID)
+	if spec.Name == "" {
+		spec.Name = defaultJobName(spec.Article, 10)
+	}
 	if spec.Options.ImageStyle == "" {
 		spec.Options.ImageStyle = "realistic"
 	}
@@ -208,6 +226,18 @@ func normalizeVideoCount(value *int) *int {
 	}
 
 	return intPtr(*value)
+}
+
+func defaultJobName(article string, limit int) string {
+	if limit <= 0 || article == "" {
+		return ""
+	}
+	if utf8.RuneCountInString(article) <= limit {
+		return article
+	}
+
+	runes := []rune(article)
+	return string(runes[:limit])
 }
 
 func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
@@ -305,6 +335,17 @@ func buildDefaultWorkflow(spec model.JobSpec, now time.Time) []model.Task {
 			},
 			now,
 		),
+	}
+}
+
+func (s *Service) deleteWorkspaceArtifacts(publicID string) {
+	if strings.TrimSpace(s.workspaceDir) == "" || strings.TrimSpace(publicID) == "" {
+		return
+	}
+
+	jobDir := filepath.Join(s.workspaceDir, "jobs", publicID)
+	if err := os.RemoveAll(jobDir); err != nil {
+		s.log.Warn("delete workspace artifacts failed", "job_public_id", publicID, "path", jobDir, "error", err)
 	}
 }
 

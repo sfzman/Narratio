@@ -32,6 +32,41 @@ func (s *Store) CreateJob(ctx context.Context, job *model.Job) error {
 	return s.createJob(ctx, s.db, job)
 }
 
+func (s *Store) ListJobs(ctx context.Context) ([]model.Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		id,
+		public_id,
+		token,
+		status,
+		progress,
+		spec_json,
+		warnings_json,
+		error_json,
+		result_json,
+		created_at,
+		updated_at
+	FROM jobs
+	ORDER BY updated_at DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobs := make([]model.Job, 0)
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan job row: %w", err)
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
 func (s *Store) InitializeJob(ctx context.Context, job *model.Job, tasks []model.Task) ([]model.Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -57,6 +92,32 @@ func (s *Store) InitializeJob(ctx context.Context, job *model.Job, tasks []model
 	}
 
 	return createdTasks, nil
+}
+
+func (s *Store) DeleteJobWorkflow(ctx context.Context, jobID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete job workflow tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE job_id = ?`, jobID); err != nil {
+		return fmt.Errorf("delete tasks by job %d: %w", jobID, err)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?`, jobID)
+	if err != nil {
+		return fmt.Errorf("delete job %d: %w", jobID, err)
+	}
+	if err := expectRowsAffected(res, store.ErrJobNotFound); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete job workflow tx: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Store) createJob(ctx context.Context, exec execContexter, job *model.Job) error {

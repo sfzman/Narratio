@@ -44,8 +44,17 @@ func (f *fakeJobCreator) CancelJob(_ context.Context, _ string) (jobapp.CancelOu
 }
 
 type fakeJobReader struct {
-	job model.Job
-	err error
+	jobs []model.Job
+	job  model.Job
+	err  error
+}
+
+func (f *fakeJobReader) ListJobs(_ context.Context) ([]model.Job, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return f.jobs, nil
 }
 
 func (f *fakeJobReader) GetJobByPublicID(_ context.Context, _ string) (model.Job, error) {
@@ -192,12 +201,14 @@ func TestCreateJob(t *testing.T) {
 		job: model.Job{
 			PublicID:  "job_abc123",
 			Status:    model.JobStatusQueued,
+			Spec:      model.JobSpec{Name: "hello worl"},
 			CreatedAt: now,
 		},
 	}
 	router := NewRouter(service, nil, nil, nil, HealthStatus{})
 
 	body, err := json.Marshal(map[string]any{
+		"name":    "我的任务",
 		"article": "hello world",
 		"options": map[string]any{
 			"voice_id":     "male_calm",
@@ -222,6 +233,9 @@ func TestCreateJob(t *testing.T) {
 	if service.spec.Article != "hello world" {
 		t.Fatalf("article = %q", service.spec.Article)
 	}
+	if service.spec.Name != "我的任务" {
+		t.Fatalf("name = %q", service.spec.Name)
+	}
 	if service.spec.Options.VoiceID != "male_calm" {
 		t.Fatalf("voice_id = %q", service.spec.Options.VoiceID)
 	}
@@ -230,6 +244,49 @@ func TestCreateJob(t *testing.T) {
 	}
 	if service.spec.Options.VideoCount == nil || *service.spec.Options.VideoCount != 5 {
 		t.Fatalf("video_count = %#v", service.spec.Options.VideoCount)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"name":"hello worl"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestListJobs(t *testing.T) {
+	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
+	router := NewRouter(
+		nil,
+		&fakeJobReader{
+			jobs: []model.Job{
+				{
+					PublicID:  "job_abc123",
+					Status:    model.JobStatusRunning,
+					Progress:  62,
+					Spec:      model.JobSpec{Name: "山村怪谈开篇"},
+					CreatedAt: now,
+					UpdatedAt: now.Add(time.Minute),
+				},
+			},
+		},
+		nil,
+		nil,
+		HealthStatus{},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"job_id":"job_abc123"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"name":"山村怪谈开篇"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"progress":62`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 
@@ -296,6 +353,7 @@ func TestGetJob(t *testing.T) {
 				PublicID:  "job_abc123",
 				Status:    model.JobStatusRunning,
 				Progress:  66,
+				Spec:      model.JobSpec{Name: "山村怪谈开篇"},
 				Warnings:  []string{"image fallback"},
 				CreatedAt: now,
 				UpdatedAt: now.Add(time.Minute),
@@ -321,6 +379,9 @@ func TestGetJob(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"job_id":"job_abc123"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"name":"山村怪谈开篇"`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"running":1`)) {
@@ -487,6 +548,132 @@ func TestDownloadJobVideoReturnsInternalErrorWhenFileMissing(t *testing.T) {
 	}
 }
 
+func TestGetJobArtifactJSONFile(t *testing.T) {
+	workspaceDir := t.TempDir()
+	relativePath := filepath.ToSlash(filepath.Join("jobs", "job_abc123", "script", "segment_000.json"))
+	fullPath := filepath.Join(workspaceDir, filepath.Clean(relativePath))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(fullPath, []byte(`{"segment_index":0,"shots":[{"index":0}]}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	router := NewRouter(
+		nil,
+		&fakeJobReader{job: model.Job{PublicID: "job_abc123"}},
+		nil,
+		nil,
+		HealthStatus{},
+		workspaceDir,
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_abc123/artifact?path="+relativePath, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"kind":"json"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"segment_index":0`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestGetJobArtifactDirectory(t *testing.T) {
+	workspaceDir := t.TempDir()
+	dirPath := filepath.ToSlash(filepath.Join("jobs", "job_abc123", "script"))
+	fullDirPath := filepath.Join(workspaceDir, filepath.Clean(dirPath))
+	if err := os.MkdirAll(fullDirPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fullDirPath, "segment_000.json"), []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fullDirPath, "README.md"), []byte(`# script`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fullDirPath, "preview.jpg"), []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	router := NewRouter(
+		nil,
+		&fakeJobReader{job: model.Job{PublicID: "job_abc123"}},
+		nil,
+		nil,
+		HealthStatus{},
+		workspaceDir,
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_abc123/artifact?path="+dirPath, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"kind":"directory"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"segment_000.json"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"README.md"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if bytes.Contains(recorder.Body.Bytes(), []byte(`"preview.jpg"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestGetJobArtifactRejectsPathOutsideJob(t *testing.T) {
+	router := NewRouter(
+		nil,
+		&fakeJobReader{job: model.Job{PublicID: "job_abc123"}},
+		nil,
+		nil,
+		HealthStatus{},
+		t.TempDir(),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_abc123/artifact?path=jobs/job_other/script/segment_000.json", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":1001`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestGetJobArtifactReturnsNotFoundWhenMissing(t *testing.T) {
+	router := NewRouter(
+		nil,
+		&fakeJobReader{job: model.Job{PublicID: "job_abc123"}},
+		nil,
+		nil,
+		HealthStatus{},
+		t.TempDir(),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job_abc123/artifact?path=jobs/job_abc123/script/segment_000.json", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":1005`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
 func TestCancelJob(t *testing.T) {
 	service := &fakeJobCreator{
 		cancelOutcome: jobapp.CancelOutcome{
@@ -512,6 +699,35 @@ func TestCancelJob(t *testing.T) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"status":"cancelling"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestDeleteTerminalJob(t *testing.T) {
+	service := &fakeJobCreator{
+		cancelOutcome: jobapp.CancelOutcome{
+			Job: model.Job{
+				PublicID: "job_done_123",
+				Status:   model.JobStatusCompleted,
+			},
+			Cancelled: false,
+			Deleted:   true,
+		},
+	}
+	router := NewRouter(service, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/job_done_123", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"deleted":true`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"status":"completed"`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }

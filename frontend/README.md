@@ -1,20 +1,23 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Narratio Frontend
 
-# Run and deploy your AI Studio app
+`frontend/` 是 Narratio 的产品前端 skeleton，技术栈为 React + TypeScript + Vite + Tailwind CSS + React Flow。
 
-This contains everything you need to run your app locally.
+当前状态：
 
-View your app in AI Studio: https://ai.studio/apps/b0906387-f7e8-41c2-92a4-ca143df32af3
+- 已有 DAG 画布、任务创建弹窗、节点详情侧栏的静态 UI 骨架
+- 尚未接入真实 Narratio 后端 API
+- 不依赖 AI Studio / Gemini runtime
 
-## Run Locally
+本地运行：
 
-**Prerequisites:**  Node.js
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
+默认与本仓库 `backend/` 一起联调，后端接口契约见：
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- `docs/frontend.md`
+- `docs/api-spec.md`
+- `docs/deployment.md`

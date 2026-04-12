@@ -175,6 +175,7 @@ func LoadRuntime() (*Runtime, error) {
 		cfg.BackgroundRunnerWorkerCount,
 	)
 	jobsService := jobapp.NewService(store, backgroundRunner)
+	jobsService.SetWorkspaceDir(cfg.WorkspaceDir)
 	dispatchService := jobapp.NewDispatchService(store, schedulerService, runCoordinator)
 	router := handler.NewRouter(jobsService, store, store, dispatchService, handler.HealthStatus{
 		Version: "dev",

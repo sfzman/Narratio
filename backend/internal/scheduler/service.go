@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
@@ -176,20 +177,43 @@ func (s *Service) executePreparedDispatch(
 ) (DispatchResult, []model.Task, error) {
 	executingTasks := cloneTasks(updatedTasks)
 	persistedTasks := cloneTasks(updatedTasks)
-	results := executeDispatchCandidates(
+	finalTasks := executingTasks
+	allSelected := cloneDispatchCandidates(selected)
+	results := make(chan dispatchOutcome, len(updatedTasks))
+	runningCount := 0
+	var wg sync.WaitGroup
+	enrichedSelected := s.withProgressReporters(ctx, selected)
+	startDispatchCandidates(
 		ctx,
 		*job,
-		s.withProgressReporters(ctx, selected),
+		enrichedSelected,
 		s.resources,
 		s.scriptTimeoutPerSegment,
 		s.shotVideoTimeoutPerShot,
 		s.videoRenderTimeout,
+		results,
+		&wg,
 	)
-	finalTasks := executingTasks
-	for outcome := range results {
+	runningCount += len(enrichedSelected)
+
+	for runningCount > 0 {
+		outcome := <-results
+		runningCount--
 		finalTasks = applyDispatchOutcome(*job, finalTasks, outcome)
 		finalTasks = PromoteReadyTasks(finalTasks)
+		nextSelected, err := selectDispatchCandidates(ctx, finalTasks, s.registry, s.resources)
+		if err != nil {
+			s.log.Error("select next dispatch candidates failed",
+				"job_id", job.ID,
+				"job_public_id", job.PublicID,
+				"task_id", outcome.task.ID,
+				"task_key", outcome.task.Key,
+				"error", err,
+			)
+			return DispatchResult{}, nil, err
+		}
 		if err := s.persistDispatchStage(job, persistedTasks, finalTasks); err != nil {
+			releaseSelectedResources(nextSelected, s.resources)
 			s.log.Error("persist incremental execution state failed",
 				"job_id", job.ID,
 				"job_public_id", job.PublicID,
@@ -200,9 +224,29 @@ func (s *Service) executePreparedDispatch(
 			return DispatchResult{}, nil, err
 		}
 		persistedTasks = cloneTasks(finalTasks)
-	}
+		if len(nextSelected) == 0 {
+			continue
+		}
 
-	return buildDispatchResult(finalTasks, selected), finalTasks, nil
+		enrichedNext := s.withProgressReporters(ctx, nextSelected)
+		startDispatchCandidates(
+			ctx,
+			*job,
+			enrichedNext,
+			s.resources,
+			s.scriptTimeoutPerSegment,
+			s.shotVideoTimeoutPerShot,
+			s.videoRenderTimeout,
+			results,
+			&wg,
+		)
+		runningCount += len(enrichedNext)
+		allSelected = append(allSelected, cloneDispatchCandidates(enrichedNext)...)
+	}
+	wg.Wait()
+	close(results)
+
+	return buildDispatchResult(finalTasks, allSelected), finalTasks, nil
 }
 
 func (s *Service) withProgressReporters(
@@ -279,6 +323,16 @@ func cloneTaskMap(input map[string]model.Task) map[string]model.Task {
 	cloned := make(map[string]model.Task, len(input))
 	for key, task := range input {
 		cloned[key] = task
+	}
+
+	return cloned
+}
+
+func cloneDispatchCandidates(input []dispatchCandidate) []dispatchCandidate {
+	cloned := make([]dispatchCandidate, 0, len(input))
+	for _, candidate := range input {
+		candidate.dependencies = cloneTaskMap(candidate.dependencies)
+		cloned = append(cloned, candidate)
 	}
 
 	return cloned

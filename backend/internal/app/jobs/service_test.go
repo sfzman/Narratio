@@ -76,6 +76,9 @@ func TestCreateJobBuildsAndPersistsDefaultWorkflow(t *testing.T) {
 	if job.Status != model.JobStatusQueued {
 		t.Fatalf("CreateJob() status = %q, want %q", job.Status, model.JobStatusQueued)
 	}
+	if job.Spec.Name != "hello worl" {
+		t.Fatalf("CreateJob() name = %q, want %q", job.Spec.Name, "hello worl")
+	}
 	if job.Spec.Options.VoiceID != model.DefaultVoicePresetID {
 		t.Fatalf("CreateJob() voice_id = %q, want %q", job.Spec.Options.VoiceID, model.DefaultVoicePresetID)
 	}
@@ -261,6 +264,24 @@ func TestCreateJobPropagatesExplicitImageStyleToCharacterImage(t *testing.T) {
 	}
 }
 
+func TestCreateJobPreservesExplicitName(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	service := NewService(store)
+
+	job, _, err := service.CreateJob(context.Background(), model.JobSpec{
+		Name:    "自定义任务名",
+		Article: "hello world",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+	if job.Spec.Name != "自定义任务名" {
+		t.Fatalf("job spec name = %q, want %q", job.Spec.Name, "自定义任务名")
+	}
+}
+
 func TestCancelJobCancelsQueuedJobImmediately(t *testing.T) {
 	t.Parallel()
 
@@ -376,6 +397,80 @@ func TestCancelJobMarksRunningJobAsCancellingAndCancelsRunner(t *testing.T) {
 	}
 	if persistedTasks[1].Status != model.TaskStatusCancelled {
 		t.Fatalf("task[1] status = %q, want cancelled", persistedTasks[1].Status)
+	}
+}
+
+func TestCancelJobDeletesTerminalJobAndWorkspace(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	service := NewService(store)
+	workspaceDir := t.TempDir()
+	service.SetWorkspaceDir(workspaceDir)
+
+	now := time.Date(2026, 4, 12, 14, 0, 0, 0, time.UTC)
+	job := model.Job{
+		PublicID:  "job_terminal_delete_123",
+		Token:     "job_token_terminal_delete_123",
+		Status:    model.JobStatusCompleted,
+		Progress:  100,
+		Spec:      model.JobSpec{Name: "已完成任务", Article: "story"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateJob(context.Background(), &job); err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+	_, err := store.CreateTasks(context.Background(), []model.Task{
+		{
+			JobID:       job.ID,
+			Key:         "video",
+			Type:        model.TaskTypeVideo,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceVideoRender,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTasks() error = %v", err)
+	}
+
+	jobDir := filepath.Join(workspaceDir, "jobs", job.PublicID)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(jobDir, "marker.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	outcome, err := service.CancelJob(context.Background(), job.PublicID)
+	if err != nil {
+		t.Fatalf("CancelJob() error = %v", err)
+	}
+	if !outcome.Deleted {
+		t.Fatal("Deleted = false, want true")
+	}
+	if outcome.Cancelled {
+		t.Fatal("Cancelled = true, want false")
+	}
+
+	if _, err := store.GetJobByPublicID(context.Background(), job.PublicID); err == nil {
+		t.Fatal("GetJobByPublicID() error = nil, want not found")
+	}
+	tasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("tasks len = %d, want 0", len(tasks))
+	}
+	if _, err := os.Stat(jobDir); !os.IsNotExist(err) {
+		t.Fatalf("jobDir exists after delete, err = %v", err)
 	}
 }
 

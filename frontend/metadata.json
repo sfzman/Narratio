@@ -1,5 +1,5 @@
 {
   "name": "Narratio",
-  "description": "Professional AI Content Production Workflow Workbench - Transform articles into narrated short videos with a visual DAG workflow.",
+  "description": "Narratio 产品前端骨架，用于将文章转换为朗诵短片的 DAG 工作台。",
   "requestFramePermissions": []
 }

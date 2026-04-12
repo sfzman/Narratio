@@ -25,6 +25,7 @@ handler -> app/jobs -> scheduler -> pipeline executors
 
 - `handler` 只负责 HTTP
 - `app/jobs` 负责创建 job、构建 task DAG、取消 job
+- 终态 job 的删除也由 `app/jobs` 负责，包含元数据删除与 workspace 清理
 - `scheduler` 负责挑选 ready task 并派发执行
 - `pipeline/*` 负责执行具体 task
 - `store` 保存 job / task 元数据，不保存运行时对象
@@ -33,6 +34,7 @@ handler -> app/jobs -> scheduler -> pipeline executors
 
 ```go
 type JobSpec struct {
+    Name    string
     Article string
     Options RenderOptions
 }
@@ -135,13 +137,15 @@ pending/ready -> skipped
 当前最小实现约束：
 
 - `app/jobs.CreateJob(spec)` 负责规范化默认值
+- 当前默认会把空白 `name` 规范化为 `article` 的前 10 个 rune
 - 当前默认会把 `options.aspect_ratio` 规范化为 `9:16`
 - 当前默认会把 `options.video_count` 规范化为 `12`
 - 使用固定 workflow builder 生成首版 task DAG
 - 通过 store 的原子接口一次性写入 `job + tasks`
 - 当前实现会在入库成功后把 `job.ID` 投递给后台 runner
 - 后台 runner 当前是“跨 job 并发 worker 池”模型：同一个 job 仍只会被一个 worker 持有，但不同 job 可由多个 worker 并发推进
-- 每个 worker 会循环调用 `scheduler.DispatchOnce(jobID)`，每一轮尽可能并行触发所有已 `ready` 且资源配额允许的 task，直到该 job 进入终态或当前没有可派发 task
+- 每个 worker 会循环调用 `scheduler.DispatchOnce(jobID)`，直到该 job 进入终态或当前没有可派发 task
+- 单次 `DispatchOnce(jobID)` 内部采用增量派发：已启动 task 运行期间，只要某个 task 先完成并释放出新的下游 `ready` task，scheduler 会立即再次尝试选取并启动它，而不是等同批次其他无关 task 全部结束
 
 MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬编码顺序调用。
 
@@ -212,7 +216,7 @@ const (
 
 - scheduler 第一版先只负责 `pending -> ready` 判定
 - 再提供内存版 `ResourceManager` 做资源配额检查
-- 第二步增加同步执行入口：单轮 `DispatchOnce(jobID)` 会尽量派发当前所有可运行 task
+- 第二步增加同步执行入口：单轮 `DispatchOnce(jobID)` 会先派发当前可运行 task，并在同一轮内持续吸收新变成 `ready` 的下游 task
 - 第三步增加 `DispatchOnce(jobID)`，从 store 读取并把 task/job 状态写回数据库
 - 第四步开始接真实包内 executor，但仍可先用 stub 产物，不急着调外部 API
 - 当前 skeleton 已可让 script task 读取 segmentation / outline / character_sheet 的依赖产物
