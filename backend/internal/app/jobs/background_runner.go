@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
+	"github.com/sfzman/Narratio/backend/internal/scheduler"
 )
 
 const (
@@ -14,6 +15,7 @@ const (
 	defaultMaxDispatchStep = 32
 	defaultQueueSize       = 128
 	defaultWorkerCount     = 4
+	defaultRetryInterval   = 250 * time.Millisecond
 )
 
 type RunCoordinator struct {
@@ -100,10 +102,12 @@ func (c *RunCoordinator) Cancel(jobID int64) bool {
 type BackgroundRunner struct {
 	dispatcher      SchedulerDispatcher
 	coordinator     *RunCoordinator
+	notifier        scheduler.ResourceAvailabilityNotifier
 	queue           chan int64
 	workerCount     int
 	dispatchTimeout time.Duration
 	maxDispatchStep int
+	retryInterval   time.Duration
 	log             *slog.Logger
 	wg              sync.WaitGroup
 }
@@ -131,6 +135,7 @@ func NewBackgroundRunnerWithWorkerCount(
 		workerCount:     workerCount,
 		dispatchTimeout: defaultDispatchTimeout,
 		maxDispatchStep: defaultMaxDispatchStep,
+		retryInterval:   defaultRetryInterval,
 		log:             slog.Default().With("component", "background_runner"),
 	}
 
@@ -140,6 +145,16 @@ func NewBackgroundRunnerWithWorkerCount(
 	}
 
 	return runner
+}
+
+func (r *BackgroundRunner) SetResourceAvailabilityNotifier(
+	notifier scheduler.ResourceAvailabilityNotifier,
+) {
+	if r == nil {
+		return
+	}
+
+	r.notifier = notifier
 }
 
 func (r *BackgroundRunner) Enqueue(jobID int64) {
@@ -213,7 +228,8 @@ func (r *BackgroundRunner) loop(workerIndex int) {
 }
 
 func (r *BackgroundRunner) runJob(jobID int64) {
-	for step := 0; step < r.maxDispatchStep; step++ {
+	dispatchSteps := 0
+	for {
 		dispatchCtx, cancel := context.WithTimeout(context.Background(), r.dispatchTimeout)
 		if r.coordinator != nil {
 			r.coordinator.SetCancel(jobID, cancel)
@@ -224,7 +240,7 @@ func (r *BackgroundRunner) runJob(jobID int64) {
 		}
 		cancel()
 		if err != nil {
-			r.log.Error("background dispatch failed", "job_id", jobID, "step", step+1, "error", err)
+			r.log.Error("background dispatch failed", "job_id", jobID, "step", dispatchSteps+1, "error", err)
 			return
 		}
 		if isTerminalJobStatus(job.Status) {
@@ -237,6 +253,15 @@ func (r *BackgroundRunner) runJob(jobID int64) {
 			return
 		}
 		if !result.Dispatched {
+			if hasReadyTask(result.Tasks) && r.waitForResourceAvailability(jobID) {
+				r.log.Debug("background dispatch retry after resource wait",
+					"job_id", job.ID,
+					"job_public_id", job.PublicID,
+					"status", job.Status,
+					"progress", job.Progress,
+				)
+				continue
+			}
 			r.log.Debug("background dispatch paused without ready task",
 				"job_id", job.ID,
 				"job_public_id", job.PublicID,
@@ -245,9 +270,61 @@ func (r *BackgroundRunner) runJob(jobID int64) {
 			)
 			return
 		}
+		dispatchSteps++
+		if dispatchSteps >= r.maxDispatchStep {
+			r.log.Warn("background dispatch hit step limit", "job_id", jobID, "step_limit", r.maxDispatchStep)
+			return
+		}
+	}
+}
+
+func (r *BackgroundRunner) waitForResourceAvailability(jobID int64) bool {
+	if r == nil {
+		return false
+	}
+	if r.retryInterval <= 0 {
+		r.retryInterval = defaultRetryInterval
 	}
 
-	r.log.Warn("background dispatch hit step limit", "job_id", jobID, "step_limit", r.maxDispatchStep)
+	var availability <-chan struct{}
+	cancelSubscription := func() {}
+	if r.notifier != nil {
+		availability, cancelSubscription = r.notifier.SubscribeAvailability()
+	}
+	defer cancelSubscription()
+
+	waitCtx, cancel := context.WithCancel(context.Background())
+	if r.coordinator != nil {
+		r.coordinator.SetCancel(jobID, cancel)
+	}
+	defer func() {
+		if r.coordinator != nil {
+			r.coordinator.ClearCancel(jobID)
+		}
+		cancel()
+	}()
+
+	timer := time.NewTimer(r.retryInterval)
+	defer timer.Stop()
+
+	select {
+	case <-waitCtx.Done():
+		return false
+	case <-availability:
+		return true
+	case <-timer.C:
+		return true
+	}
+}
+
+func hasReadyTask(tasks []model.Task) bool {
+	for _, task := range tasks {
+		if task.Status == model.TaskStatusReady {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isTerminalJobStatus(status model.JobStatus) bool {

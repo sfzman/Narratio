@@ -12,10 +12,16 @@ type ResourceManager interface {
 	Release(key model.ResourceKey)
 }
 
+type ResourceAvailabilityNotifier interface {
+	SubscribeAvailability() (<-chan struct{}, func())
+}
+
 type MemoryResourceManager struct {
-	mu     sync.Mutex
-	limits map[model.ResourceKey]int
-	inUse  map[model.ResourceKey]int
+	mu           sync.Mutex
+	limits       map[model.ResourceKey]int
+	inUse        map[model.ResourceKey]int
+	waiters      map[uint64]chan struct{}
+	nextWaiterID uint64
 }
 
 func NewMemoryResourceManager(limits map[model.ResourceKey]int) *MemoryResourceManager {
@@ -25,8 +31,9 @@ func NewMemoryResourceManager(limits map[model.ResourceKey]int) *MemoryResourceM
 	}
 
 	return &MemoryResourceManager{
-		limits: cloned,
-		inUse:  make(map[model.ResourceKey]int, len(limits)),
+		limits:  cloned,
+		inUse:   make(map[model.ResourceKey]int, len(limits)),
+		waiters: make(map[uint64]chan struct{}),
 	}
 }
 
@@ -48,11 +55,48 @@ func (m *MemoryResourceManager) TryAcquire(_ context.Context, key model.Resource
 
 func (m *MemoryResourceManager) Release(key model.ResourceKey) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.inUse[key] <= 0 {
+		m.mu.Unlock()
 		return
 	}
 
 	m.inUse[key]--
+	waiters := m.drainWaitersLocked()
+	m.mu.Unlock()
+
+	for _, waiter := range waiters {
+		close(waiter)
+	}
+}
+
+func (m *MemoryResourceManager) SubscribeAvailability() (<-chan struct{}, func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	waiterID := m.nextWaiterID
+	m.nextWaiterID++
+	waiter := make(chan struct{})
+	m.waiters[waiterID] = waiter
+
+	return waiter, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		waiter, ok := m.waiters[waiterID]
+		if !ok {
+			return
+		}
+		delete(m.waiters, waiterID)
+		close(waiter)
+	}
+}
+
+func (m *MemoryResourceManager) drainWaitersLocked() []chan struct{} {
+	waiters := make([]chan struct{}, 0, len(m.waiters))
+	for waiterID, waiter := range m.waiters {
+		waiters = append(waiters, waiter)
+		delete(m.waiters, waiterID)
+	}
+
+	return waiters
 }

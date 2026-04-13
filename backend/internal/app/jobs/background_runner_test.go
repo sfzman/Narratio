@@ -24,6 +24,60 @@ type fakeDispatchStep struct {
 	err    error
 }
 
+type fakeResourceNotifier struct {
+	mu         sync.Mutex
+	waiters    map[int]chan struct{}
+	nextID     int
+	subscribed chan struct{}
+}
+
+func newFakeResourceNotifier() *fakeResourceNotifier {
+	return &fakeResourceNotifier{
+		waiters:    make(map[int]chan struct{}),
+		subscribed: make(chan struct{}, 8),
+	}
+}
+
+func (f *fakeResourceNotifier) SubscribeAvailability() (<-chan struct{}, func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	waiterID := f.nextID
+	f.nextID++
+	waiter := make(chan struct{})
+	f.waiters[waiterID] = waiter
+	select {
+	case f.subscribed <- struct{}{}:
+	default:
+	}
+
+	return waiter, func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		waiter, ok := f.waiters[waiterID]
+		if !ok {
+			return
+		}
+		delete(f.waiters, waiterID)
+		close(waiter)
+	}
+}
+
+func (f *fakeResourceNotifier) Notify() {
+	f.mu.Lock()
+	waiters := make([]chan struct{}, 0, len(f.waiters))
+	for waiterID, waiter := range f.waiters {
+		waiters = append(waiters, waiter)
+		delete(f.waiters, waiterID)
+	}
+	f.mu.Unlock()
+
+	for _, waiter := range waiters {
+		close(waiter)
+	}
+}
+
 func (f *fakeBackgroundScheduler) DispatchOnce(
 	_ context.Context,
 	jobID int64,
@@ -153,4 +207,88 @@ func TestBackgroundRunnerRunsDifferentJobsConcurrently(t *testing.T) {
 	}
 
 	t.Fatal("jobs 7 and 8 should have been released after concurrent completion")
+}
+
+func TestBackgroundRunnerRetriesBlockedReadyJobAfterResourceAvailable(t *testing.T) {
+	coord := NewRunCoordinator()
+	notifier := newFakeResourceNotifier()
+	dispatcher := &fakeBackgroundScheduler{
+		resultsByJob: map[int64][]fakeDispatchStep{
+			7: {
+				{
+					result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "tts"},
+					job:    model.Job{ID: 7, PublicID: "job_7", Status: model.JobStatusCompleted, Progress: 100},
+				},
+			},
+			8: {
+				{
+					result: scheduler.DispatchResult{
+						Dispatched: false,
+						Tasks: []model.Task{
+							{Key: "tts", Status: model.TaskStatusReady},
+						},
+					},
+					job: model.Job{ID: 8, PublicID: "job_8", Status: model.JobStatusQueued, Progress: 44},
+				},
+				{
+					result: scheduler.DispatchResult{Dispatched: true, ExecutedTaskKey: "tts"},
+					job:    model.Job{ID: 8, PublicID: "job_8", Status: model.JobStatusCompleted, Progress: 100},
+				},
+			},
+		},
+		started: make(chan int64, 4),
+		blockByJob: map[int64]chan struct{}{
+			7: make(chan struct{}),
+		},
+	}
+	runner := NewBackgroundRunnerWithWorkerCount(dispatcher, coord, 2)
+	runner.SetResourceAvailabilityNotifier(notifier)
+	runner.retryInterval = 5 * time.Second
+	runner.maxDispatchStep = 1
+	t.Cleanup(func() {
+		_ = runner.Close()
+	})
+
+	runner.Enqueue(7)
+	runner.Enqueue(8)
+
+	startedJobs := map[int64]int{}
+	deadline := time.After(500 * time.Millisecond)
+	for startedJobs[7] == 0 || startedJobs[8] == 0 {
+		select {
+		case jobID := <-dispatcher.started:
+			startedJobs[jobID]++
+		case <-deadline:
+			t.Fatalf("started jobs = %#v, want first dispatch for both jobs", startedJobs)
+		}
+	}
+
+	select {
+	case <-notifier.subscribed:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("runner did not subscribe to resource availability after blocked ready task")
+	}
+
+	close(dispatcher.blockByJob[7])
+	notifier.Notify()
+
+	waitDeadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(waitDeadline) {
+		dispatcher.mu.Lock()
+		job8Calls := 0
+		for _, jobID := range dispatcher.calls {
+			if jobID == 8 {
+				job8Calls++
+			}
+		}
+		dispatcher.mu.Unlock()
+		if job8Calls >= 2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	dispatcher.mu.Lock()
+	defer dispatcher.mu.Unlock()
+	t.Fatalf("job 8 dispatch calls = %#v, want retry after resource becomes available", dispatcher.calls)
 }

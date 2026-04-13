@@ -146,6 +146,8 @@ pending/ready -> skipped
 - 后台 runner 当前是“跨 job 并发 worker 池”模型：同一个 job 仍只会被一个 worker 持有，但不同 job 可由多个 worker 并发推进
 - 每个 worker 会循环调用 `scheduler.DispatchOnce(jobID)`，直到该 job 进入终态或当前没有可派发 task
 - 单次 `DispatchOnce(jobID)` 内部采用增量派发：已启动 task 运行期间，只要某个 task 先完成并释放出新的下游 `ready` task，scheduler 会立即再次尝试选取并启动它，而不是等同批次其他无关 task 全部结束
+- 如果某个 job 已经存在 `ready` task，但因共享资源池暂时满载而本轮未派发成功，后台 runner 不会直接放弃该 job，而会等待资源释放通知后继续重试，避免跨 job 场景下出现“ready 但长期不触发”
+- 资源等待重试不计入 worker 的 `DispatchOnce` 步数上限；步数上限只用于限制真正发生过派发推进的轮次，避免长耗时资源占用时把其它已 `ready` job 误判为“到达 step limit”
 
 MVP 先支持一套固定 workflow，但内部表达必须是 DAG，而不是硬编码顺序调用。
 

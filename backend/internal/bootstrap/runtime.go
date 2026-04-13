@@ -174,6 +174,7 @@ func LoadRuntime() (*Runtime, error) {
 		runCoordinator,
 		cfg.BackgroundRunnerWorkerCount,
 	)
+	backgroundRunner.SetResourceAvailabilityNotifier(resourceManager)
 	jobsService := jobapp.NewService(store, backgroundRunner)
 	jobsService.SetWorkspaceDir(cfg.WorkspaceDir)
 	dispatchService := jobapp.NewDispatchService(store, schedulerService, runCoordinator)
