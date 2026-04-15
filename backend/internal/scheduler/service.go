@@ -165,6 +165,7 @@ func (s *Service) prepareDispatch(
 	if err != nil {
 		return nil, nil, err
 	}
+	s.logDispatchSelection(job, updatedTasks, selected, "initial")
 
 	return selected, updatedTasks, nil
 }
@@ -212,6 +213,7 @@ func (s *Service) executePreparedDispatch(
 			)
 			return DispatchResult{}, nil, err
 		}
+		s.logDispatchSelection(*job, finalTasks, nextSelected, "incremental")
 		if err := s.persistDispatchStage(job, persistedTasks, finalTasks); err != nil {
 			releaseSelectedResources(nextSelected, s.resources)
 			s.log.Error("persist incremental execution state failed",
@@ -302,12 +304,46 @@ func (s *Service) persistDispatchStage(
 }
 
 func (s *Service) logNoDispatch(_ DispatchResult, job model.Job) {
-	s.log.Debug("no ready task dispatched",
+	s.log.Info("no ready task dispatched",
 		"job_id", job.ID,
 		"job_public_id", job.PublicID,
 		"job_status", job.Status,
 		"progress", job.Progress,
 	)
+}
+
+func (s *Service) logDispatchSelection(
+	job model.Job,
+	tasks []model.Task,
+	selected []dispatchCandidate,
+	stage string,
+) {
+	readyKeys := taskKeysByStatus(tasks, model.TaskStatusReady)
+	if len(readyKeys) == 0 {
+		return
+	}
+
+	selectedKeys := make([]string, 0, len(selected))
+	for _, candidate := range selected {
+		selectedKeys = append(selectedKeys, candidate.task.Key)
+	}
+
+	logArgs := []any{
+		"job_id", job.ID,
+		"job_public_id", job.PublicID,
+		"stage", stage,
+		"ready_keys", readyKeys,
+		"selected_keys", selectedKeys,
+	}
+	if snapshotProvider, ok := s.resources.(ResourceSnapshotProvider); ok {
+		snapshot := snapshotProvider.Snapshot()
+		logArgs = append(logArgs,
+			"resource_in_use", snapshot.InUse,
+			"resource_limits", snapshot.Limits,
+		)
+	}
+
+	s.log.Info("ready tasks remain undispatched after selection", logArgs...)
 }
 
 func cloneTasks(tasks []model.Task) []model.Task {
@@ -336,6 +372,17 @@ func cloneDispatchCandidates(input []dispatchCandidate) []dispatchCandidate {
 	}
 
 	return cloned
+}
+
+func taskKeysByStatus(tasks []model.Task, status model.TaskStatus) []string {
+	keys := make([]string, 0)
+	for _, task := range tasks {
+		if task.Status == status {
+			keys = append(keys, task.Key)
+		}
+	}
+
+	return keys
 }
 
 func ensureTaskOutputRef(outputRef map[string]any) map[string]any {

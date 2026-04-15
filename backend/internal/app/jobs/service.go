@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -78,6 +79,13 @@ type CancelOutcome struct {
 	Cancelled bool
 	Deleted   bool
 }
+
+type RenameOutcome struct {
+	Job     model.Job
+	Renamed bool
+}
+
+var ErrJobNameRequired = errors.New("job name required")
 
 func (s *Service) CreateJob(ctx context.Context, spec model.JobSpec) (model.Job, []model.Task, error) {
 	normalized := normalizeSpec(spec)
@@ -193,6 +201,39 @@ func (s *Service) CancelJob(ctx context.Context, publicID string) (CancelOutcome
 		Job:       job,
 		Cancelled: true,
 		Deleted:   false,
+	}, nil
+}
+
+func (s *Service) RenameJob(
+	ctx context.Context,
+	publicID string,
+	name string,
+) (RenameOutcome, error) {
+	job, err := s.store.GetJobByPublicID(ctx, publicID)
+	if err != nil {
+		return RenameOutcome{}, fmt.Errorf("get job by public id: %w", err)
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return RenameOutcome{}, ErrJobNameRequired
+	}
+	if job.Spec.Name == name {
+		return RenameOutcome{
+			Job:     job,
+			Renamed: false,
+		}, nil
+	}
+
+	job.Spec.Name = name
+	job.UpdatedAt = s.clock.Now()
+	if err := s.store.UpdateJob(ctx, job); err != nil {
+		return RenameOutcome{}, fmt.Errorf("update renamed job: %w", err)
+	}
+
+	return RenameOutcome{
+		Job:     job,
+		Renamed: true,
 	}, nil
 }
 

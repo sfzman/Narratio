@@ -7,6 +7,9 @@ import type {
   JobListResponse,
   JobSummaryResponse,
   JobTasksResponse,
+  RenameJobRequest,
+  RenameJobResponse,
+  RetryTaskResponse,
 } from '@/types/api';
 import {apiRequest, getApiBaseUrl} from './api';
 
@@ -52,6 +55,20 @@ export async function getJobArtifact(jobId: string, path: string): Promise<JobAr
 export async function deleteJob(jobId: string): Promise<DeleteJobResponse> {
   return apiRequest<DeleteJobResponse>(`/jobs/${jobId}`, {
     method: 'DELETE',
+  });
+}
+
+export async function renameJob(jobId: string, request: RenameJobRequest | string): Promise<RenameJobResponse> {
+  const payload = typeof request === 'string' ? {name: request} : request;
+  return apiRequest<RenameJobResponse>(`/jobs/${jobId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function retryTask(jobId: string, taskKey: string): Promise<RetryTaskResponse> {
+  return apiRequest<RetryTaskResponse>(`/jobs/${jobId}/tasks/${taskKey}/retry`, {
+    method: 'POST',
   });
 }
 

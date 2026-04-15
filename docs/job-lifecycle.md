@@ -236,6 +236,19 @@ const (
 - `pending` / `ready` task 直接置为 `cancelled`
 - 已完成 task 保持原状态，不回滚
 
+## 单任务重试语义
+
+- `POST /jobs/:id/tasks/:task_key/retry` 作用于单个 task
+- 当前最小实现只允许重试 `failed` task，且 job 当前不能存在任何 `running` task
+- 重试时会重置“目标 task + 其所有下游子图”的运行态元数据：
+  - `status -> pending`
+  - `error -> nil`
+  - `output_ref -> {}`
+- 重置后会重新执行一次 `PromoteReadyTasks(...)`
+- 因此若目标 task 的上游依赖仍然全部 `succeeded`，它会立即重新进入 `ready`
+- 与该 task 无关的已成功分支保持不变；例如重试 `script` 时，`tts` 分支不会被回滚
+- 当前最小实现不主动删除旧 artifact 文件，只更新 task 元数据并重新 enqueue job；新的执行结果会覆盖后续引用
+
 ## Panic 与异常恢复
 
 - 所有后台 goroutine 外层必须 `recover`

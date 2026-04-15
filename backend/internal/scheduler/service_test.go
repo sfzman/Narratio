@@ -863,15 +863,25 @@ func TestDispatchOncePersistsFastTaskCompletionWhileSlowTaskStillRunning(t *test
 
 	<-segmentationDone
 
-	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
-	if err != nil {
-		t.Fatalf("ListTasksByJob() error = %v", err)
-	}
-	if persistedTasks[0].Status != model.TaskStatusSucceeded {
-		t.Fatalf("segmentation status during outline run = %q, want %q", persistedTasks[0].Status, model.TaskStatusSucceeded)
-	}
-	if persistedTasks[1].Status != model.TaskStatusRunning {
-		t.Fatalf("outline status during outline run = %q, want %q", persistedTasks[1].Status, model.TaskStatusRunning)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+		if err != nil {
+			t.Fatalf("ListTasksByJob() error = %v", err)
+		}
+		if persistedTasks[0].Status == model.TaskStatusSucceeded && persistedTasks[1].Status == model.TaskStatusRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf(
+				"task states during outline run = [%q %q], want [%q %q]",
+				persistedTasks[0].Status,
+				persistedTasks[1].Status,
+				model.TaskStatusSucceeded,
+				model.TaskStatusRunning,
+			)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	close(releaseOutline)

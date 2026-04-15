@@ -19,11 +19,17 @@ import (
 )
 
 type fakeJobCreator struct {
-	job           model.Job
-	spec          model.JobSpec
-	err           error
-	cancelOutcome jobapp.CancelOutcome
-	cancelErr     error
+	job            model.Job
+	spec           model.JobSpec
+	err            error
+	cancelOutcome  jobapp.CancelOutcome
+	cancelErr      error
+	renameOutcome  jobapp.RenameOutcome
+	renameErr      error
+	renamePublicID string
+	renameName     string
+	retryOutcome   jobapp.RetryOutcome
+	retryErr       error
 }
 
 func (f *fakeJobCreator) CreateJob(_ context.Context, spec model.JobSpec) (model.Job, []model.Task, error) {
@@ -41,6 +47,32 @@ func (f *fakeJobCreator) CancelJob(_ context.Context, _ string) (jobapp.CancelOu
 	}
 
 	return f.cancelOutcome, nil
+}
+
+func (f *fakeJobCreator) RenameJob(
+	_ context.Context,
+	publicID string,
+	name string,
+) (jobapp.RenameOutcome, error) {
+	f.renamePublicID = publicID
+	f.renameName = name
+	if f.renameErr != nil {
+		return jobapp.RenameOutcome{}, f.renameErr
+	}
+
+	return f.renameOutcome, nil
+}
+
+func (f *fakeJobCreator) RetryTask(
+	_ context.Context,
+	_ string,
+	_ string,
+) (jobapp.RetryOutcome, error) {
+	if f.retryErr != nil {
+		return jobapp.RetryOutcome{}, f.retryErr
+	}
+
+	return f.retryOutcome, nil
 }
 
 type fakeJobReader struct {
@@ -286,6 +318,71 @@ func TestListJobs(t *testing.T) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"progress":62`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestRenameJob(t *testing.T) {
+	now := time.Date(2026, 4, 12, 12, 30, 0, 0, time.UTC)
+	service := &fakeJobCreator{
+		renameOutcome: jobapp.RenameOutcome{
+			Job: model.Job{
+				PublicID:  "job_abc123",
+				Status:    model.JobStatusRunning,
+				Progress:  62,
+				Spec:      model.JobSpec{Name: "新的项目名"},
+				CreatedAt: now.Add(-time.Hour),
+				UpdatedAt: now,
+			},
+			Renamed: true,
+		},
+	}
+	router := NewRouter(service, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/jobs/job_abc123",
+		bytes.NewBufferString(`{"name":"  新的项目名  "}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if service.renamePublicID != "job_abc123" {
+		t.Fatalf("renamePublicID = %q, want %q", service.renamePublicID, "job_abc123")
+	}
+	if service.renameName != "新的项目名" {
+		t.Fatalf("renameName = %q, want %q", service.renameName, "新的项目名")
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"name":"新的项目名"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"renamed":true`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestRenameJobRejectsBlankName(t *testing.T) {
+	router := NewRouter(&fakeJobCreator{}, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/jobs/job_abc123",
+		bytes.NewBufferString(`{"name":"   "}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":1001`)) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
@@ -743,6 +840,57 @@ func TestCancelJobNotFound(t *testing.T) {
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+func TestRetryTask(t *testing.T) {
+	service := &fakeJobCreator{
+		retryOutcome: jobapp.RetryOutcome{
+			Job: model.Job{
+				PublicID: "job_retry_123",
+				Status:   model.JobStatusQueued,
+				Progress: 44,
+			},
+			TaskKey:       "script",
+			Retried:       true,
+			ResetTaskKeys: []string{"script", "image", "shot_video", "video"},
+		},
+	}
+	router := NewRouter(service, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/job_retry_123/tasks/script/retry", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"task_key":"script"`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"retried":true`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"reset_task_keys":["script","image","shot_video","video"]`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestRetryTaskReturnsConflictWhenNotAllowed(t *testing.T) {
+	service := &fakeJobCreator{retryErr: jobapp.ErrTaskRetryNotAllowed}
+	router := NewRouter(service, nil, nil, nil, HealthStatus{})
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/job_retry_123/tasks/script/retry", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":1004`)) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 

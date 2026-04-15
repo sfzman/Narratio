@@ -8,11 +8,13 @@ import Sidebar from './components/layout/Sidebar';
 import WorkflowCanvas from './components/workflow/WorkflowCanvas';
 import NodeInspector from './components/workflow/NodeInspector';
 import CreateTaskModal from './components/modals/CreateTaskModal';
+import DeleteProjectModal from './components/modals/DeleteProjectModal';
+import RenameProjectModal from './components/modals/RenameProjectModal';
 import {CreateTaskParams, WorkflowNode} from './types/workflow';
 import {Bell, Settings} from 'lucide-react';
 import {AnimatePresence} from 'motion/react';
 import {ApiError} from './lib/api';
-import {createJob, deleteJob, getJob, getJobTasks, listJobs} from './lib/jobs';
+import {createJob, deleteJob, getJob, getJobTasks, listJobs, renameJob, retryTask} from './lib/jobs';
 import type {JobListItemResponse, JobSummaryResponse} from './types/api';
 import {mapJobToProject} from './lib/workflow-mapper';
 
@@ -44,6 +46,16 @@ function getWorkflowPollingHint(status: JobListItemResponse['status'] | null | u
   return '该任务运行已超过 10 分钟；如果进度长时间不变化，请检查后端日志。';
 }
 
+function sortJobsByUpdatedAt(jobs: JobListItemResponse[]): JobListItemResponse[] {
+  return [...jobs].sort((left, right) => {
+    const timeDiff = new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return right.job_id.localeCompare(left.job_id);
+  });
+}
+
 export default function App() {
   const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -52,6 +64,12 @@ export default function App() {
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [jobActionError, setJobActionError] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [deleteTargetJobId, setDeleteTargetJobId] = useState<string | null>(null);
+  const [deleteJobError, setDeleteJobError] = useState<string | null>(null);
+  const [renamingJobId, setRenamingJobId] = useState<string | null>(null);
+  const [renameTargetJobId, setRenameTargetJobId] = useState<string | null>(null);
+  const [renameJobError, setRenameJobError] = useState<string | null>(null);
+  const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [workflowNodes, setWorkflowNodes] = useState<WorkflowNode[]>([]);
   const [workflowLoading, setWorkflowLoading] = useState(false);
@@ -67,7 +85,7 @@ export default function App() {
     setJobsError(null);
     try {
       const response = await listJobs();
-      setJobs(response.jobs);
+      setJobs(sortJobsByUpdatedAt(response.jobs));
       setSelectedJobId((current) => {
         if (current && response.jobs.some((job) => job.job_id === current)) {
           return current;
@@ -109,6 +127,14 @@ export default function App() {
     () => jobs.find((job) => job.job_id === selectedJobId) ?? null,
     [jobs, selectedJobId],
   );
+  const renameTargetJob = useMemo(
+    () => jobs.find((job) => job.job_id === renameTargetJobId) ?? null,
+    [jobs, renameTargetJobId],
+  );
+  const deleteTargetJob = useMemo(
+    () => jobs.find((job) => job.job_id === deleteTargetJobId) ?? null,
+    [jobs, deleteTargetJobId],
+  );
 
   const loadWorkflow = useCallback(async (jobId: string, options?: {silent?: boolean}) => {
     const silent = options?.silent === true;
@@ -140,7 +166,7 @@ export default function App() {
         return project.nodes.find((node) => node.id === current.id) ?? null;
       });
       setJobs((current) =>
-        current.map((item) =>
+        sortJobsByUpdatedAt(current.map((item) =>
           item.job_id === job.job_id
             ? {
                 ...item,
@@ -151,7 +177,7 @@ export default function App() {
                 updated_at: job.updated_at,
               }
             : item,
-        ),
+        )),
       );
       setWorkflowError(null);
       return job;
@@ -222,29 +248,141 @@ export default function App() {
     };
   }, [loadWorkflow, selectedJobId]);
 
-  const handleDeleteJob = useCallback(async (jobId: string) => {
-    if (!window.confirm('Delete this job and its artifacts?')) {
+  const handleDeleteJob = useCallback((jobId: string) => {
+    const job = jobs.find((item) => item.job_id === jobId);
+    if (!job) {
+      setJobActionError('Project not found.');
+      return;
+    }
+    setJobActionError(null);
+    setDeleteJobError(null);
+    setDeleteTargetJobId(jobId);
+  }, [jobs]);
+
+  const handleCloseDeleteModal = useCallback(() => {
+    if (deletingJobId) {
+      return;
+    }
+    setDeleteTargetJobId(null);
+    setDeleteJobError(null);
+  }, [deletingJobId]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTargetJob) {
+      setDeleteJobError('Project not found.');
       return;
     }
 
     setJobActionError(null);
-    setDeletingJobId(jobId);
+    setDeleteJobError(null);
+    setDeletingJobId(deleteTargetJob.job_id);
     try {
-      await deleteJob(jobId);
+      await deleteJob(deleteTargetJob.job_id);
       await loadJobs();
       setSelectedNode(null);
       setWorkflowNodes([]);
+      setDeleteTargetJobId(null);
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Failed to delete job.';
-      setJobActionError(message);
+      setDeleteJobError(message);
     } finally {
       setDeletingJobId(null);
     }
-  }, [loadJobs]);
+  }, [deleteTargetJob, loadJobs]);
 
-  const handleRenameJob = useCallback(() => {
-    setJobActionError('Rename is not implemented yet.');
-  }, []);
+  const handleRenameJob = useCallback((jobId: string) => {
+    const job = jobs.find((item) => item.job_id === jobId);
+    if (!job) {
+      setJobActionError('Project not found.');
+      return;
+    }
+    setJobActionError(null);
+    setRenameJobError(null);
+    setRenameTargetJobId(jobId);
+  }, [jobs]);
+
+  const handleCloseRenameModal = useCallback(() => {
+    if (renamingJobId) {
+      return;
+    }
+    setRenameTargetJobId(null);
+    setRenameJobError(null);
+  }, [renamingJobId]);
+
+  const handleConfirmRename = useCallback(async (nextName: string) => {
+    if (!renameTargetJob) {
+      setRenameJobError('Project not found.');
+      return;
+    }
+
+    const trimmedName = nextName.trim();
+    if (trimmedName === '') {
+      setRenameJobError('Project name cannot be empty.');
+      return;
+    }
+    if (trimmedName === renameTargetJob.name) {
+      setRenameJobError(null);
+      setRenameTargetJobId(null);
+      return;
+    }
+
+    setJobActionError(null);
+    setRenameJobError(null);
+    setRenamingJobId(renameTargetJob.job_id);
+    try {
+      const renamed = await renameJob(renameTargetJob.job_id, trimmedName);
+      setJobs((current) =>
+        sortJobsByUpdatedAt(current.map((item) =>
+          item.job_id === renamed.job_id
+            ? {
+                ...item,
+                name: renamed.name,
+                status: renamed.status,
+                progress: renamed.progress,
+                created_at: renamed.created_at,
+                updated_at: renamed.updated_at,
+              }
+            : item,
+        )),
+      );
+      setSelectedJobSummary((current) => (
+        current && current.job_id === renamed.job_id
+          ? {
+              ...current,
+              name: renamed.name,
+              status: renamed.status,
+              progress: renamed.progress,
+              created_at: renamed.created_at,
+              updated_at: renamed.updated_at,
+            }
+          : current
+      ));
+      setRenameTargetJobId(null);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to rename project.';
+      setRenameJobError(message);
+    } finally {
+      setRenamingJobId(null);
+    }
+  }, [renameTargetJob]);
+
+  const handleRetryTask = useCallback(async (node: WorkflowNode) => {
+    if (!selectedJobId || retryingTaskKey) {
+      return;
+    }
+
+    setJobActionError(null);
+    setRetryingTaskKey(node.id);
+    try {
+      await retryTask(selectedJobId, node.id);
+      await loadWorkflow(selectedJobId);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to retry task.';
+      setJobActionError(message);
+    } finally {
+      setRetryingTaskKey(null);
+    }
+  }, [loadWorkflow, retryingTaskKey, selectedJobId]);
 
   const handleOpenCreateModal = useCallback(() => {
     setCreateJobError(null);
@@ -287,6 +425,7 @@ export default function App() {
         jobsError={jobsError}
         actionError={jobActionError}
         deletingJobId={deletingJobId}
+        renamingJobId={renamingJobId}
         workflowNodes={workflowNodes}
         onJobSelect={setSelectedJobId}
         onTaskSelect={handleTaskSelect} 
@@ -345,8 +484,10 @@ export default function App() {
             workflowNodes={workflowNodes}
             loading={workflowLoading}
             error={workflowError}
+            retryingNodeId={retryingTaskKey}
             selectedNodeId={selectedNode?.id || null} 
-            onNodeSelect={setSelectedNode} 
+            onNodeSelect={setSelectedNode}
+            onNodeRetry={handleRetryTask}
           />
         </main>
 
@@ -371,6 +512,22 @@ export default function App() {
         onCreate={handleCreateJob}
         submitting={createJobSubmitting}
         error={createJobError}
+      />
+      <DeleteProjectModal
+        isOpen={deleteTargetJob != null}
+        projectName={deleteTargetJob?.name ?? ''}
+        onClose={handleCloseDeleteModal}
+        onDelete={handleConfirmDelete}
+        submitting={deletingJobId != null}
+        error={deleteJobError}
+      />
+      <RenameProjectModal
+        isOpen={renameTargetJob != null}
+        currentName={renameTargetJob?.name ?? ''}
+        onClose={handleCloseRenameModal}
+        onRename={handleConfirmRename}
+        submitting={renamingJobId != null}
+        error={renameJobError}
       />
     </div>
   );

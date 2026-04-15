@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -282,6 +283,68 @@ func TestCreateJobPreservesExplicitName(t *testing.T) {
 	}
 }
 
+func TestRenameJobUpdatesStoredNameAndTimestamp(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	service := NewService(store)
+	now := time.Date(2026, 4, 10, 8, 0, 0, 0, time.UTC)
+	service.clock = fixedClock{now: now}
+
+	job, _, err := service.CreateJob(context.Background(), model.JobSpec{
+		Name:    "旧名字",
+		Article: "hello world",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+
+	renamedAt := now.Add(5 * time.Minute)
+	service.clock = fixedClock{now: renamedAt}
+
+	outcome, err := service.RenameJob(context.Background(), job.PublicID, "  新名字  ")
+	if err != nil {
+		t.Fatalf("RenameJob() error = %v", err)
+	}
+	if !outcome.Renamed {
+		t.Fatal("Renamed = false, want true")
+	}
+	if outcome.Job.Spec.Name != "新名字" {
+		t.Fatalf("job spec name = %q, want %q", outcome.Job.Spec.Name, "新名字")
+	}
+	if !outcome.Job.UpdatedAt.Equal(renamedAt) {
+		t.Fatalf("updated_at = %v, want %v", outcome.Job.UpdatedAt, renamedAt)
+	}
+
+	persisted, err := store.GetJobByPublicID(context.Background(), job.PublicID)
+	if err != nil {
+		t.Fatalf("GetJobByPublicID() error = %v", err)
+	}
+	if persisted.Spec.Name != "新名字" {
+		t.Fatalf("persisted name = %q, want %q", persisted.Spec.Name, "新名字")
+	}
+}
+
+func TestRenameJobRejectsBlankName(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	service := NewService(store)
+
+	job, _, err := service.CreateJob(context.Background(), model.JobSpec{
+		Name:    "旧名字",
+		Article: "hello world",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+
+	_, err = service.RenameJob(context.Background(), job.PublicID, "   ")
+	if !errors.Is(err, ErrJobNameRequired) {
+		t.Fatalf("RenameJob() error = %v, want %v", err, ErrJobNameRequired)
+	}
+}
+
 func TestCancelJobCancelsQueuedJobImmediately(t *testing.T) {
 	t.Parallel()
 
@@ -471,6 +534,259 @@ func TestCancelJobDeletesTerminalJobAndWorkspace(t *testing.T) {
 	}
 	if _, err := os.Stat(jobDir); !os.IsNotExist(err) {
 		t.Fatalf("jobDir exists after delete, err = %v", err)
+	}
+}
+
+func TestRetryTaskResetsFailedTaskSubtreeAndEnqueuesJob(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	runner := &fakeJobRunner{}
+	service := NewService(store, runner)
+	now := time.Date(2026, 4, 13, 10, 0, 0, 0, time.UTC)
+	service.clock = fixedClock{now: now}
+
+	job := model.Job{
+		PublicID:  "job_retry_task_123",
+		Token:     "job_token_retry_task_123",
+		Status:    model.JobStatusFailed,
+		Progress:  55,
+		Spec:      model.JobSpec{Article: "story"},
+		Warnings:  []string{},
+		Error:     &model.JobError{Code: "task_execution_failed", Message: "script failed"},
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-time.Minute),
+	}
+	if err := store.CreateJob(context.Background(), &job); err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+
+	_, err := store.CreateTasks(context.Background(), []model.Task{
+		{
+			JobID:       job.ID,
+			Key:         "segmentation",
+			Type:        model.TaskTypeSegmentation,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceLocalCPU,
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/segments.json"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "outline",
+			Type:        model.TaskTypeOutline,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceLLMText,
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/outline.json"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "character_sheet",
+			Type:        model.TaskTypeCharacterSheet,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceLLMText,
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/character_sheet.json"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusFailed,
+			ResourceKey: model.ResourceLLMText,
+			DependsOn:   []string{"segmentation", "outline", "character_sheet"},
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/script/segment_000.json"},
+			Error:       &model.TaskError{Code: "task_execution_failed", Message: "script failed"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "tts",
+			Type:        model.TaskTypeTTS,
+			Status:      model.TaskStatusSucceeded,
+			ResourceKey: model.ResourceTTS,
+			DependsOn:   []string{"segmentation"},
+			Attempt:     1,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/audio/segment_000.wav"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "image",
+			Type:        model.TaskTypeImage,
+			Status:      model.TaskStatusSkipped,
+			ResourceKey: model.ResourceImageGen,
+			DependsOn:   []string{"script"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/images/image_manifest.json"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "shot_video",
+			Type:        model.TaskTypeShotVideo,
+			Status:      model.TaskStatusSkipped,
+			ResourceKey: model.ResourceVideoGen,
+			DependsOn:   []string{"image"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/shot_video/manifest.json"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "video",
+			Type:        model.TaskTypeVideo,
+			Status:      model.TaskStatusSkipped,
+			ResourceKey: model.ResourceVideoRender,
+			DependsOn:   []string{"tts", "shot_video"},
+			Attempt:     0,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{"artifact_path": "jobs/job_retry_task_123/output/final.mp4"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTasks() error = %v", err)
+	}
+
+	outcome, err := service.RetryTask(context.Background(), job.PublicID, "script")
+	if err != nil {
+		t.Fatalf("RetryTask() error = %v", err)
+	}
+	if !outcome.Retried {
+		t.Fatal("Retried = false, want true")
+	}
+	if len(outcome.ResetTaskKeys) != 4 {
+		t.Fatalf("ResetTaskKeys = %#v, want 4 keys", outcome.ResetTaskKeys)
+	}
+	if len(runner.jobIDs) != 1 || runner.jobIDs[0] != job.ID {
+		t.Fatalf("runner jobIDs = %#v, want [%d]", runner.jobIDs, job.ID)
+	}
+
+	persistedJob, err := store.GetJobByPublicID(context.Background(), job.PublicID)
+	if err != nil {
+		t.Fatalf("GetJobByPublicID() error = %v", err)
+	}
+	if persistedJob.Status != model.JobStatusQueued {
+		t.Fatalf("job status = %q, want queued", persistedJob.Status)
+	}
+	if persistedJob.Error != nil {
+		t.Fatalf("job error = %#v, want nil", persistedJob.Error)
+	}
+
+	persistedTasks, err := store.ListTasksByJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("ListTasksByJob() error = %v", err)
+	}
+	if persistedTasks[3].Status != model.TaskStatusReady {
+		t.Fatalf("script status = %q, want ready", persistedTasks[3].Status)
+	}
+	if persistedTasks[3].Error != nil {
+		t.Fatalf("script error = %#v, want nil", persistedTasks[3].Error)
+	}
+	if len(persistedTasks[3].OutputRef) != 0 {
+		t.Fatalf("script output_ref = %#v, want empty", persistedTasks[3].OutputRef)
+	}
+	if persistedTasks[4].Status != model.TaskStatusSucceeded {
+		t.Fatalf("tts status = %q, want succeeded", persistedTasks[4].Status)
+	}
+	if persistedTasks[5].Status != model.TaskStatusPending {
+		t.Fatalf("image status = %q, want pending", persistedTasks[5].Status)
+	}
+	if persistedTasks[6].Status != model.TaskStatusPending {
+		t.Fatalf("shot_video status = %q, want pending", persistedTasks[6].Status)
+	}
+	if persistedTasks[7].Status != model.TaskStatusPending {
+		t.Fatalf("video status = %q, want pending", persistedTasks[7].Status)
+	}
+}
+
+func TestRetryTaskRejectsWhenAnotherTaskIsRunning(t *testing.T) {
+	t.Parallel()
+
+	store := newWorkflowTestStore(t)
+	service := NewService(store)
+	now := time.Date(2026, 4, 13, 11, 0, 0, 0, time.UTC)
+	service.clock = fixedClock{now: now}
+
+	job := model.Job{
+		PublicID:  "job_retry_blocked_123",
+		Token:     "job_token_retry_blocked_123",
+		Status:    model.JobStatusRunning,
+		Progress:  66,
+		Spec:      model.JobSpec{Article: "story"},
+		Warnings:  []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateJob(context.Background(), &job); err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+	_, err := store.CreateTasks(context.Background(), []model.Task{
+		{
+			JobID:       job.ID,
+			Key:         "script",
+			Type:        model.TaskTypeScript,
+			Status:      model.TaskStatusFailed,
+			ResourceKey: model.ResourceLLMText,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{},
+			Error:       &model.TaskError{Code: "task_execution_failed", Message: "failed"},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			JobID:       job.ID,
+			Key:         "tts",
+			Type:        model.TaskTypeTTS,
+			Status:      model.TaskStatusRunning,
+			ResourceKey: model.ResourceTTS,
+			MaxAttempts: 1,
+			Payload:     map[string]any{},
+			OutputRef:   map[string]any{},
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTasks() error = %v", err)
+	}
+
+	_, err = service.RetryTask(context.Background(), job.PublicID, "script")
+	if err == nil {
+		t.Fatal("RetryTask() error = nil, want not allowed")
+	}
+	if err != ErrTaskRetryNotAllowed {
+		t.Fatalf("RetryTask() error = %v, want %v", err, ErrTaskRetryNotAllowed)
 	}
 }
 

@@ -16,6 +16,15 @@ type ResourceAvailabilityNotifier interface {
 	SubscribeAvailability() (<-chan struct{}, func())
 }
 
+type ResourceSnapshot struct {
+	Limits map[model.ResourceKey]int
+	InUse  map[model.ResourceKey]int
+}
+
+type ResourceSnapshotProvider interface {
+	Snapshot() ResourceSnapshot
+}
+
 type MemoryResourceManager struct {
 	mu           sync.Mutex
 	limits       map[model.ResourceKey]int
@@ -99,4 +108,23 @@ func (m *MemoryResourceManager) drainWaitersLocked() []chan struct{} {
 	}
 
 	return waiters
+}
+
+func (m *MemoryResourceManager) Snapshot() ResourceSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	limits := make(map[model.ResourceKey]int, len(m.limits))
+	for key, value := range m.limits {
+		limits[key] = value
+	}
+	inUse := make(map[model.ResourceKey]int, len(m.inUse))
+	for key, value := range m.inUse {
+		inUse[key] = value
+	}
+
+	return ResourceSnapshot{
+		Limits: limits,
+		InUse:  inUse,
+	}
 }

@@ -19,6 +19,7 @@
 - 当前选中 job 的 DAG 画布已接入 `GET /api/v1/jobs/:job_id` 与 `GET /api/v1/jobs/:job_id/tasks`
 - 当前选中 job 已按 `docs/api-spec.md` 约定进行前端轮询
 - 任务创建弹窗已接入 `POST /api/v1/jobs`
+- project rename 已接入 `PATCH /api/v1/jobs/:job_id`
 - 任务删除已接入 `DELETE /api/v1/jobs/:job_id`
 
 当前仍然没有完全产品化，主要还缺：
@@ -48,6 +49,7 @@ Narratio 产品前端是一个普通 Web App，不依赖 AI Studio / Gemini runt
 前端当前只应依赖以下后端接口：
 
 - `POST /api/v1/jobs`
+- `PATCH /api/v1/jobs/:job_id`
 - `GET /api/v1/jobs/:job_id`
 - `GET /api/v1/jobs/:job_id/tasks`
 - `GET /api/v1/jobs/:job_id/artifact`

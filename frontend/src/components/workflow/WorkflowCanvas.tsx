@@ -29,12 +29,23 @@ const NODE_POSITIONS: Record<string, {x: number; y: number}> = {
   video: {x: 1450, y: 300},
 };
 
-function buildFlowNodes(workflowNodes: WorkflowNode[], selectedNodeId: string | null): Node[] {
+function buildFlowNodes(
+  workflowNodes: WorkflowNode[],
+  selectedNodeId: string | null,
+  retryingNodeId: string | null,
+  onNodeSelect: (node: WorkflowNode | null) => void,
+  onNodeRetry?: (node: WorkflowNode) => void,
+): Node[] {
   return workflowNodes.map((node) => ({
     id: node.id,
     type: 'process',
     position: NODE_POSITIONS[node.id] || {x: 0, y: 0},
-    data: {...node},
+    data: {
+      ...node,
+      onView: () => onNodeSelect(node),
+      onRetry: onNodeRetry ? () => onNodeRetry(node) : undefined,
+      retrying: retryingNodeId === node.id,
+    },
     selected: node.id === selectedNodeId,
   }));
 }
@@ -64,7 +75,9 @@ interface WorkflowCanvasProps {
   loading?: boolean;
   error?: string | null;
   selectedNodeId: string | null;
+  retryingNodeId?: string | null;
   onNodeSelect: (node: WorkflowNode | null) => void;
+  onNodeRetry?: (node: WorkflowNode) => void;
 }
 
 const WorkflowCanvas = ({
@@ -72,15 +85,17 @@ const WorkflowCanvas = ({
   loading = false,
   error = null,
   selectedNodeId,
+  retryingNodeId = null,
   onNodeSelect,
+  onNodeRetry,
 }: WorkflowCanvasProps) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   useEffect(() => {
-    setNodes(buildFlowNodes(workflowNodes, selectedNodeId));
+    setNodes(buildFlowNodes(workflowNodes, selectedNodeId, retryingNodeId, onNodeSelect, onNodeRetry));
     setEdges(buildFlowEdges(workflowNodes));
-  }, [workflowNodes, selectedNodeId, setNodes, setEdges]);
+  }, [workflowNodes, selectedNodeId, retryingNodeId, onNodeSelect, onNodeRetry, setNodes, setEdges]);
 
   // Sync external selection to ReactFlow nodes
   useEffect(() => {

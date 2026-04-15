@@ -248,6 +248,42 @@
 
 ---
 
+### POST /api/v1/jobs/:job_id/tasks/:task_key/retry — 重试单个失败 task
+
+用于在 job 当前没有 `running` task 时，手动重试一个 `failed` task。
+
+当前最小语义：
+
+- 只允许重试 `failed` task
+- 当前 job 不能存在任何 `running` task
+- 会重置“目标 task + 它的所有下游子图”
+- 不会回滚不相关分支；例如重试 `script` 时，不会重置已经成功的 `tts`
+- 当前只重置 task 元数据，不主动删除旧 artifact 文件；新的成功执行会覆盖对应输出引用
+- 重置完成后，后端会自动重新 enqueue 该 job，由后台 runner 继续推进
+
+**Response 200**
+```json
+{
+  "code": 0,
+  "data": {
+    "job_id": "job_abc123",
+    "task_key": "script",
+    "status": "queued",
+    "progress": 44,
+    "retried": true,
+    "reset_task_keys": ["script", "image", "shot_video", "video"]
+  }
+}
+```
+
+**错误语义**
+
+- 若 `job_id` 不存在：返回 `404 / code=1002`
+- 若 `task_key` 不存在：返回 `404 / code=1002`
+- 若该 task 当前不是 `failed`，或 job 仍有 `running` task：返回 `409 / code=1004`
+
+---
+
 ### GET /api/v1/jobs/:job_id/download — 下载视频
 
 返回视频文件流（`video/mp4`），支持 Range 请求。
@@ -340,6 +376,45 @@ Accept-Ranges: bytes
 - 对文本文件，服务端返回 `text` 字段
 - 对目录，当前只返回一层子项，不递归展开
 - 当前只用于 inspector / 调试预览，不提供批量下载能力
+
+---
+
+### PATCH /api/v1/jobs/:job_id — 重命名任务
+
+用于前端左侧 project list 的 rename 操作；只更新任务名，不影响 job / task 执行状态。
+
+**Request Body**
+```json
+{
+  "name": "新的项目名"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| name | string | ✅ | 新任务名；去掉首尾空白后不能为空 |
+
+**Response 200**
+```json
+{
+  "code": 0,
+  "data": {
+    "job_id": "job_abc123",
+    "name": "新的项目名",
+    "status": "running",
+    "progress": 62,
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-01-15T10:31:30Z",
+    "renamed": true
+  }
+}
+```
+
+补充语义：
+
+- 当前只允许更新 `name`，不支持同时修改 `article` 或 `options`
+- 若 `name` 只有空白字符，返回 `1001`
+- 成功重命名后会刷新 `updated_at`，因此 `GET /jobs` 列表中的排序会随之变化
 
 ---
 

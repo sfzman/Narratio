@@ -7,6 +7,7 @@ import { motion } from 'motion/react';
 
 interface NodeCardProps {
   data: {
+    id: string;
     label: string;
     chineseLabel: string;
     status: NodeStatus;
@@ -15,6 +16,7 @@ interface NodeCardProps {
     onView?: () => void;
     onEdit?: () => void;
     onRetry?: () => void;
+    retrying?: boolean;
   };
   selected?: boolean;
 }
@@ -47,6 +49,7 @@ const StatusIcon = ({ status }: { status: NodeStatus }) => {
 
 const NodeCard = ({ data, selected }: NodeCardProps) => {
   const isRunning = data.status === 'running';
+  const isRetrying = data.retrying === true;
 
   return (
     <div className={cn(
@@ -87,15 +90,36 @@ const NodeCard = ({ data, selected }: NodeCardProps) => {
       </div>
 
       <div className="mt-4 flex items-center gap-2 pt-3 border-t border-slate-800 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onView?.();
+          }}
+          className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+        >
           View
         </button>
-        <button className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onEdit?.();
+          }}
+          className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+        >
           Edit
         </button>
         {data.status === 'failed' && (
-          <button className="text-[10px] px-2 py-1 rounded bg-rose-900/30 hover:bg-rose-900/50 text-rose-300 transition-colors">
-            Retry
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!isRetrying) {
+                data.onRetry?.();
+              }
+            }}
+            disabled={isRetrying}
+            className="text-[10px] px-2 py-1 rounded bg-rose-900/30 hover:bg-rose-900/50 text-rose-300 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isRetrying ? 'Retrying...' : 'Retry'}
           </button>
         )}
       </div>

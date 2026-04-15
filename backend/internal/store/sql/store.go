@@ -679,7 +679,7 @@ func marshalNullable(v any) (any, error) {
 }
 
 func unmarshalNullable[T any](src sql.NullString, dst **T) error {
-	if !src.Valid || src.String == "" {
+	if !src.Valid || src.String == "" || src.String == "null" {
 		*dst = nil
 		return nil
 	}

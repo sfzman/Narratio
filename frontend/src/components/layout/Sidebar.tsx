@@ -27,6 +27,7 @@ interface SidebarProps {
   jobsError?: string | null;
   actionError?: string | null;
   deletingJobId?: string | null;
+  renamingJobId?: string | null;
   workflowNodes?: WorkflowNode[];
   onJobSelect: (jobId: string) => void;
   onTaskSelect: (taskId: string) => void;
@@ -72,6 +73,7 @@ const Sidebar = ({
   jobsError = null,
   actionError = null,
   deletingJobId = null,
+  renamingJobId = null,
   workflowNodes = [],
   onJobSelect,
   onTaskSelect,
@@ -270,15 +272,20 @@ const Sidebar = ({
         >
           <button
             type="button"
+            disabled={renamingJobId === contextMenu.jobId}
             onClick={() => {
               onRenameJob(contextMenu.jobId);
               setContextMenu(null);
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-400"
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors",
+              renamingJobId === contextMenu.jobId
+                ? "cursor-not-allowed text-slate-600"
+                : "text-slate-400 hover:bg-slate-800/80"
+            )}
           >
             <PencilLine className="h-3.5 w-3.5" />
-            Rename
-            <span className="ml-auto text-[10px] text-slate-600">Soon</span>
+            {renamingJobId === contextMenu.jobId ? 'Renaming...' : 'Rename'}
           </button>
           <button
             type="button"

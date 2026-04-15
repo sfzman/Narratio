@@ -115,6 +115,20 @@ export interface CreateJobResponse {
   estimated_seconds: number;
 }
 
+export interface RenameJobRequest {
+  name: string;
+}
+
+export interface RenameJobResponse {
+  job_id: string;
+  name: string;
+  status: JobStatus;
+  progress: number;
+  created_at: string;
+  updated_at: string;
+  renamed: boolean;
+}
+
 export interface JobListItemResponse {
   job_id: string;
   name: string;
@@ -132,6 +146,15 @@ export interface DeleteJobResponse {
   cancelled: boolean;
   deleted: boolean;
   status: JobStatus;
+}
+
+export interface RetryTaskResponse {
+  job_id: string;
+  task_key: string;
+  status: JobStatus;
+  progress: number;
+  retried: boolean;
+  reset_task_keys: string[];
 }
 
 export interface ArtifactEntryResponse {

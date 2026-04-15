@@ -15,7 +15,7 @@ const (
 	defaultMaxDispatchStep = 32
 	defaultQueueSize       = 128
 	defaultWorkerCount     = 4
-	defaultRetryInterval   = 250 * time.Millisecond
+	defaultRetryInterval   = 10 * time.Second
 )
 
 type RunCoordinator struct {
@@ -221,8 +221,17 @@ func (r *BackgroundRunner) loop(workerIndex int) {
 	defer r.wg.Done()
 
 	for jobID := range r.queue {
-		r.log.Debug("background worker picked job", "worker_index", workerIndex, "job_id", jobID)
+		r.log.Info("background worker picked job",
+			"worker_index", workerIndex,
+			"job_id", jobID,
+			"queue_depth", len(r.queue),
+		)
 		r.runJob(jobID)
+		r.log.Info("background worker released job",
+			"worker_index", workerIndex,
+			"job_id", jobID,
+			"queue_depth", len(r.queue),
+		)
 		r.coordinator.Release(jobID)
 	}
 }
@@ -230,6 +239,10 @@ func (r *BackgroundRunner) loop(workerIndex int) {
 func (r *BackgroundRunner) runJob(jobID int64) {
 	dispatchSteps := 0
 	for {
+		r.log.Info("background dispatch step started",
+			"job_id", jobID,
+			"step", dispatchSteps+1,
+		)
 		dispatchCtx, cancel := context.WithTimeout(context.Background(), r.dispatchTimeout)
 		if r.coordinator != nil {
 			r.coordinator.SetCancel(jobID, cancel)
@@ -243,6 +256,19 @@ func (r *BackgroundRunner) runJob(jobID int64) {
 			r.log.Error("background dispatch failed", "job_id", jobID, "step", dispatchSteps+1, "error", err)
 			return
 		}
+		r.log.Info("background dispatch step completed",
+			"job_id", job.ID,
+			"job_public_id", job.PublicID,
+			"step", dispatchSteps+1,
+			"dispatched", result.Dispatched,
+			"dispatched_task_count", result.DispatchedTaskCount,
+			"dispatched_task_keys", result.ExecutedTaskKeys,
+			"ready_keys", taskKeysByStatus(result.Tasks, model.TaskStatusReady),
+			"running_keys", taskKeysByStatus(result.Tasks, model.TaskStatusRunning),
+			"failed_keys", taskKeysByStatus(result.Tasks, model.TaskStatusFailed),
+			"job_status", job.Status,
+			"progress", job.Progress,
+		)
 		if isTerminalJobStatus(job.Status) {
 			r.log.Info("background job reached terminal state",
 				"job_id", job.ID,
@@ -253,20 +279,43 @@ func (r *BackgroundRunner) runJob(jobID int64) {
 			return
 		}
 		if !result.Dispatched {
-			if hasReadyTask(result.Tasks) && r.waitForResourceAvailability(jobID) {
-				r.log.Debug("background dispatch retry after resource wait",
+			readyKeys := taskKeysByStatus(result.Tasks, model.TaskStatusReady)
+			runningKeys := taskKeysByStatus(result.Tasks, model.TaskStatusRunning)
+			failedKeys := taskKeysByStatus(result.Tasks, model.TaskStatusFailed)
+			if len(readyKeys) > 0 {
+				woke, wakeReason := r.waitForResourceAvailability(jobID)
+				if woke {
+					r.log.Info("background dispatch retry after resource wait",
+						"job_id", job.ID,
+						"job_public_id", job.PublicID,
+						"status", job.Status,
+						"progress", job.Progress,
+						"wake_reason", wakeReason,
+						"ready_keys", readyKeys,
+						"running_keys", runningKeys,
+						"failed_keys", failedKeys,
+					)
+					continue
+				}
+				r.log.Info("background dispatch wait aborted",
 					"job_id", job.ID,
 					"job_public_id", job.PublicID,
 					"status", job.Status,
 					"progress", job.Progress,
+					"wake_reason", wakeReason,
+					"ready_keys", readyKeys,
+					"running_keys", runningKeys,
+					"failed_keys", failedKeys,
 				)
-				continue
 			}
 			r.log.Debug("background dispatch paused without ready task",
 				"job_id", job.ID,
 				"job_public_id", job.PublicID,
 				"status", job.Status,
 				"progress", job.Progress,
+				"ready_keys", readyKeys,
+				"running_keys", runningKeys,
+				"failed_keys", failedKeys,
 			)
 			return
 		}
@@ -278,9 +327,9 @@ func (r *BackgroundRunner) runJob(jobID int64) {
 	}
 }
 
-func (r *BackgroundRunner) waitForResourceAvailability(jobID int64) bool {
+func (r *BackgroundRunner) waitForResourceAvailability(jobID int64) (bool, string) {
 	if r == nil {
-		return false
+		return false, "runner_nil"
 	}
 	if r.retryInterval <= 0 {
 		r.retryInterval = defaultRetryInterval
@@ -307,13 +356,19 @@ func (r *BackgroundRunner) waitForResourceAvailability(jobID int64) bool {
 	timer := time.NewTimer(r.retryInterval)
 	defer timer.Stop()
 
+	r.log.Info("background dispatch waiting for resource availability",
+		"job_id", jobID,
+		"retry_interval_ms", r.retryInterval.Milliseconds(),
+		"has_notifier", r.notifier != nil,
+	)
+
 	select {
 	case <-waitCtx.Done():
-		return false
+		return false, "cancelled"
 	case <-availability:
-		return true
+		return true, "resource_released"
 	case <-timer.C:
-		return true
+		return true, "retry_interval_elapsed"
 	}
 }
 
@@ -325,6 +380,17 @@ func hasReadyTask(tasks []model.Task) bool {
 	}
 
 	return false
+}
+
+func taskKeysByStatus(tasks []model.Task, status model.TaskStatus) []string {
+	keys := make([]string, 0)
+	for _, task := range tasks {
+		if task.Status == status {
+			keys = append(keys, task.Key)
+		}
+	}
+
+	return keys
 }
 
 func isTerminalJobStatus(status model.JobStatus) bool {

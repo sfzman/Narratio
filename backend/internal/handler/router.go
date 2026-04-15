@@ -22,6 +22,14 @@ type JobCanceler interface {
 	CancelJob(ctx context.Context, publicID string) (jobapp.CancelOutcome, error)
 }
 
+type JobRenamer interface {
+	RenameJob(ctx context.Context, publicID string, name string) (jobapp.RenameOutcome, error)
+}
+
+type JobRetrier interface {
+	RetryTask(ctx context.Context, publicID string, taskKey string) (jobapp.RetryOutcome, error)
+}
+
 type JobReader interface {
 	ListJobs(ctx context.Context) ([]model.Job, error)
 	GetJobByPublicID(ctx context.Context, publicID string) (model.Job, error)
@@ -44,6 +52,8 @@ type HealthStatus struct {
 type Handlers struct {
 	jobs       JobCreator
 	canceler   JobCanceler
+	renamer    JobRenamer
+	retrier    JobRetrier
 	jobReader  JobReader
 	taskReader TaskReader
 	dispatcher JobDispatcher
@@ -77,6 +87,12 @@ func NewRouter(
 	if canceler, ok := jobs.(JobCanceler); ok {
 		h.canceler = canceler
 	}
+	if renamer, ok := jobs.(JobRenamer); ok {
+		h.renamer = renamer
+	}
+	if retrier, ok := jobs.(JobRetrier); ok {
+		h.retrier = retrier
+	}
 
 	router := gin.New()
 	router.Use(middleware.CORS())
@@ -87,11 +103,13 @@ func NewRouter(
 	api.GET("/voices", h.listVoices)
 	api.POST("/jobs", h.createJob)
 	api.GET("/jobs", h.listJobs)
+	api.PATCH("/jobs/:job_id", h.renameJob)
 	api.GET("/jobs/:job_id", h.getJob)
 	api.GET("/jobs/:job_id/tasks", h.getJobTasks)
 	api.GET("/jobs/:job_id/artifact", h.getJobArtifact)
 	api.GET("/jobs/:job_id/download", h.downloadJobVideo)
 	api.DELETE("/jobs/:job_id", h.cancelJob)
+	api.POST("/jobs/:job_id/tasks/:task_key/retry", h.retryTask)
 	api.POST("/jobs/:job_id/dispatch-once", h.dispatchOnce)
 
 	return router
@@ -131,4 +149,8 @@ func bindJSON(c *gin.Context, dst any) bool {
 
 func isJobNotFound(err error) bool {
 	return errors.Is(err, store.ErrJobNotFound)
+}
+
+func isTaskNotFound(err error) bool {
+	return errors.Is(err, store.ErrTaskNotFound)
 }
