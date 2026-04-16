@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/sfzman/Narratio/backend/internal/model"
 )
@@ -185,6 +186,14 @@ func (e *Executor) generateLiveOutput(
 	segments := normalizedSegmentationSegments(segmentation)
 	for index, segment := range segments {
 		segmentIndex := normalizedSegmentIndex(segment.Index, index)
+		sentences := splitSentencesByPeriod(segment.Text)
+		e.log.Debug("tts segment synthesis started",
+			"segment_index", segmentIndex,
+			"segment_position", index+1,
+			"segment_total", len(segments),
+			"sentence_count", len(sentences),
+			"text_length", len([]rune(strings.TrimSpace(segment.Text))),
+		)
 		_ = model.ReportTaskProgress(ctx, model.TaskProgress{
 			Phase:   "generating_segment",
 			Message: fmt.Sprintf("正在生成第 %d/%d 段音频", index+1, len(segments)),
@@ -195,13 +204,16 @@ func (e *Executor) generateLiveOutput(
 		filePath := audioSegmentPath(jobPublicID, segmentIndex)
 		audioBytes, duration, sentenceCount, err := e.synthesizeSegment(
 			ctx,
+			segmentIndex,
 			segment.Text,
 			voiceID,
 		)
 		if err != nil {
 			return TTSOutput{}, fmt.Errorf(
-				"synthesize segment %d: %w",
+				"synthesize segment %d (%d/%d): %w",
 				segmentIndex,
+				index+1,
+				len(segments),
 				err,
 			)
 		}
@@ -237,6 +249,7 @@ func (e *Executor) generateLiveOutput(
 
 func (e *Executor) synthesizeSegment(
 	ctx context.Context,
+	segmentIndex int,
 	segmentText string,
 	voiceID string,
 ) ([]byte, float64, int, error) {
@@ -246,7 +259,15 @@ func (e *Executor) synthesizeSegment(
 	}
 
 	sentenceWAVs := make([][]byte, 0, len(sentences))
-	for _, sentence := range sentences {
+	for sentenceIndex, sentence := range sentences {
+		startedAt := time.Now()
+		e.log.Debug("tts sentence synthesis started",
+			"segment_index", segmentIndex,
+			"sentence_index", sentenceIndex,
+			"sentence_position", sentenceIndex+1,
+			"sentence_total", len(sentences),
+			"text_length", len([]rune(sentence)),
+		)
 		audioBytes, err := e.client.Synthesize(ctx, Request{
 			Text:       sentence,
 			VoiceID:    voiceID,
@@ -254,8 +275,22 @@ func (e *Executor) synthesizeSegment(
 			SampleRate: wavSampleRate,
 		})
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("synthesize sentence %q: %w", sentence, err)
+			return nil, 0, 0, fmt.Errorf(
+				"synthesize sentence %d/%d %q: %w",
+				sentenceIndex+1,
+				len(sentences),
+				sentence,
+				err,
+			)
 		}
+		e.log.Debug("tts sentence synthesis completed",
+			"segment_index", segmentIndex,
+			"sentence_index", sentenceIndex,
+			"sentence_position", sentenceIndex+1,
+			"sentence_total", len(sentences),
+			"elapsed_ms", time.Since(startedAt).Milliseconds(),
+			"audio_bytes", len(audioBytes),
+		)
 		sentenceWAVs = append(sentenceWAVs, audioBytes)
 	}
 

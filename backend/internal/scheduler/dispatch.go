@@ -13,6 +13,7 @@ import (
 const (
 	defaultTaskExecutionTimeout             = 20 * time.Minute
 	defaultScriptSegmentExecutionTimeout    = 200 * time.Second
+	defaultTTSSegmentExecutionTimeout       = 300 * time.Second
 	defaultShotVideoExecutionTimeoutPerShot = 200 * time.Second
 	defaultVideoRenderExecutionTimeout      = 30 * time.Minute
 )
@@ -68,6 +69,7 @@ func DispatchNextReadyTask(
 		registry,
 		resources,
 		defaultScriptSegmentExecutionTimeout,
+		defaultTTSSegmentExecutionTimeout,
 		defaultShotVideoExecutionTimeoutPerShot,
 		defaultVideoRenderExecutionTimeout,
 	)
@@ -80,6 +82,7 @@ func DispatchNextReadyTaskWithTimeouts(
 	registry *ExecutorRegistry,
 	resources ResourceManager,
 	scriptTimeoutPerSegment time.Duration,
+	ttsTimeoutPerSegment time.Duration,
 	shotVideoTimeoutPerShot time.Duration,
 	videoRenderTimeout time.Duration,
 ) (DispatchResult, error) {
@@ -98,6 +101,7 @@ func DispatchNextReadyTaskWithTimeouts(
 		selected,
 		resources,
 		scriptTimeoutPerSegment,
+		ttsTimeoutPerSegment,
 		shotVideoTimeoutPerShot,
 		videoRenderTimeout,
 	))
@@ -174,6 +178,7 @@ func executeDispatchCandidates(
 	selected []dispatchCandidate,
 	resources ResourceManager,
 	scriptTimeoutPerSegment time.Duration,
+	ttsTimeoutPerSegment time.Duration,
 	shotVideoTimeoutPerShot time.Duration,
 	videoRenderTimeout time.Duration,
 ) <-chan dispatchOutcome {
@@ -187,6 +192,7 @@ func executeDispatchCandidates(
 			selected,
 			resources,
 			scriptTimeoutPerSegment,
+			ttsTimeoutPerSegment,
 			shotVideoTimeoutPerShot,
 			videoRenderTimeout,
 			results,
@@ -206,6 +212,7 @@ func startDispatchCandidates(
 	selected []dispatchCandidate,
 	resources ResourceManager,
 	scriptTimeoutPerSegment time.Duration,
+	ttsTimeoutPerSegment time.Duration,
 	shotVideoTimeoutPerShot time.Duration,
 	videoRenderTimeout time.Duration,
 	results chan<- dispatchOutcome,
@@ -244,6 +251,7 @@ func startDispatchCandidates(
 				candidate.task,
 				candidate.dependencies,
 				scriptTimeoutPerSegment,
+				ttsTimeoutPerSegment,
 				shotVideoTimeoutPerShot,
 				videoRenderTimeout,
 			)
@@ -401,6 +409,7 @@ func withTaskExecutionTimeout(
 	task model.Task,
 	dependencies map[string]model.Task,
 	scriptTimeoutPerSegment time.Duration,
+	ttsTimeoutPerSegment time.Duration,
 	shotVideoTimeoutPerShot time.Duration,
 	videoRenderTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
@@ -408,6 +417,7 @@ func withTaskExecutionTimeout(
 		task,
 		dependencies,
 		scriptTimeoutPerSegment,
+		ttsTimeoutPerSegment,
 		shotVideoTimeoutPerShot,
 		videoRenderTimeout,
 	)
@@ -422,6 +432,7 @@ func taskExecutionTimeout(
 	task model.Task,
 	dependencies map[string]model.Task,
 	scriptTimeoutPerSegment time.Duration,
+	ttsTimeoutPerSegment time.Duration,
 	shotVideoTimeoutPerShot time.Duration,
 	videoRenderTimeout time.Duration,
 ) time.Duration {
@@ -434,6 +445,9 @@ func taskExecutionTimeout(
 	}
 	if task.Type == model.TaskTypeShotVideo {
 		return shotVideoExecutionTimeout(task, dependencies, shotVideoTimeoutPerShot)
+	}
+	if task.Type == model.TaskTypeTTS {
+		return ttsExecutionTimeout(dependencies, ttsTimeoutPerSegment)
 	}
 	if task.Type != model.TaskTypeScript {
 		return defaultTaskExecutionTimeout
@@ -448,6 +462,22 @@ func taskExecutionTimeout(
 	}
 
 	return time.Duration(segmentCount) * scriptTimeoutPerSegment
+}
+
+func ttsExecutionTimeout(
+	dependencies map[string]model.Task,
+	ttsTimeoutPerSegment time.Duration,
+) time.Duration {
+	if ttsTimeoutPerSegment <= 0 {
+		ttsTimeoutPerSegment = defaultTTSSegmentExecutionTimeout
+	}
+
+	segmentCount := scriptSegmentCount(dependencies["segmentation"])
+	if segmentCount <= 0 {
+		return defaultTaskExecutionTimeout
+	}
+
+	return time.Duration(segmentCount) * ttsTimeoutPerSegment
 }
 
 func shotVideoExecutionTimeout(

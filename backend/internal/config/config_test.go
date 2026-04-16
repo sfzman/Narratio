@@ -19,6 +19,7 @@ var narratioEnvKeys = []string{
 	"RESOURCE_VIDEO_GEN_CONCURRENCY",
 	"RESOURCE_VIDEO_RENDER_CONCURRENCY",
 	"SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS",
+	"TTS_TIMEOUT_PER_SEGMENT_SECONDS",
 	"SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS",
 	"VIDEO_RENDER_TIMEOUT_SECONDS",
 	"FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS",
@@ -74,6 +75,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.ScriptTimeoutPerSegmentSeconds != 200 {
 		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d", cfg.ScriptTimeoutPerSegmentSeconds)
+	}
+	if cfg.TTSTimeoutPerSegmentSeconds != 300 {
+		t.Fatalf("TTSTimeoutPerSegmentSeconds = %d", cfg.TTSTimeoutPerSegmentSeconds)
 	}
 	if cfg.ResourceLocalCPUConcurrency != 4 {
 		t.Fatalf("ResourceLocalCPUConcurrency = %d", cfg.ResourceLocalCPUConcurrency)
@@ -257,6 +261,22 @@ func TestLoadReadsScriptTimeoutPerSegmentSeconds(t *testing.T) {
 
 	if cfg.ScriptTimeoutPerSegmentSeconds != 320 {
 		t.Fatalf("ScriptTimeoutPerSegmentSeconds = %d, want 320", cfg.ScriptTimeoutPerSegmentSeconds)
+	}
+}
+
+func TestLoadReadsTTSTimeoutPerSegmentSeconds(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("TTS_TIMEOUT_PER_SEGMENT_SECONDS", "420")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.TTSTimeoutPerSegmentSeconds != 420 {
+		t.Fatalf("TTSTimeoutPerSegmentSeconds = %d, want 420", cfg.TTSTimeoutPerSegmentSeconds)
 	}
 }
 
@@ -485,6 +505,22 @@ func TestLoadFallsBackWhenDashScopeTextRequestTimeoutSecondsInvalid(t *testing.T
 
 	if cfg.DashScopeTextRequestTimeoutSeconds != 600 {
 		t.Fatalf("DashScopeTextRequestTimeoutSeconds = %d, want 600", cfg.DashScopeTextRequestTimeoutSeconds)
+	}
+}
+
+func TestLoadFallsBackWhenTTSTimeoutPerSegmentSecondsInvalid(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("TTS_TIMEOUT_PER_SEGMENT_SECONDS", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.TTSTimeoutPerSegmentSeconds != 300 {
+		t.Fatalf("TTSTimeoutPerSegmentSeconds = %d, want 300", cfg.TTSTimeoutPerSegmentSeconds)
 	}
 }
 

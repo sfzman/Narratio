@@ -21,6 +21,7 @@ func TestTaskExecutionTimeoutUsesSegmentCountForScript(t *testing.T) {
 			},
 		},
 		200*time.Second,
+		300*time.Second,
 		200*time.Second,
 		30*time.Minute,
 	)
@@ -36,6 +37,7 @@ func TestTaskExecutionTimeoutFallsBackForScriptWithoutSegmentCount(t *testing.T)
 		model.Task{Type: model.TaskTypeScript},
 		map[string]model.Task{},
 		200*time.Second,
+		300*time.Second,
 		200*time.Second,
 		30*time.Minute,
 	)
@@ -51,6 +53,7 @@ func TestTaskExecutionTimeoutUsesDefaultForNonScript(t *testing.T) {
 		model.Task{Type: model.TaskTypeOutline},
 		map[string]model.Task{},
 		200*time.Second,
+		300*time.Second,
 		200*time.Second,
 		30*time.Minute,
 	)
@@ -70,11 +73,71 @@ func TestTaskExecutionTimeoutUsesDefaultPerSegmentWhenConfiguredValueInvalid(t *
 			},
 		},
 		0,
+		300*time.Second,
 		200*time.Second,
 		30*time.Minute,
 	)
 	if timeout != 400*time.Second {
 		t.Fatalf("timeout = %s, want %s", timeout, 400*time.Second)
+	}
+}
+
+func TestTaskExecutionTimeoutUsesSegmentCountForTTS(t *testing.T) {
+	t.Parallel()
+
+	timeout := taskExecutionTimeout(
+		model.Task{Type: model.TaskTypeTTS},
+		map[string]model.Task{
+			"segmentation": {
+				Key: "segmentation",
+				OutputRef: map[string]any{
+					"segment_count": 4,
+				},
+			},
+		},
+		200*time.Second,
+		300*time.Second,
+		200*time.Second,
+		30*time.Minute,
+	)
+	if timeout != 1200*time.Second {
+		t.Fatalf("timeout = %s, want %s", timeout, 1200*time.Second)
+	}
+}
+
+func TestTaskExecutionTimeoutFallsBackForTTSWithoutSegmentCount(t *testing.T) {
+	t.Parallel()
+
+	timeout := taskExecutionTimeout(
+		model.Task{Type: model.TaskTypeTTS},
+		map[string]model.Task{},
+		200*time.Second,
+		300*time.Second,
+		200*time.Second,
+		30*time.Minute,
+	)
+	if timeout != defaultTaskExecutionTimeout {
+		t.Fatalf("timeout = %s, want %s", timeout, defaultTaskExecutionTimeout)
+	}
+}
+
+func TestTaskExecutionTimeoutUsesDefaultPerSegmentWhenTTSConfiguredValueInvalid(t *testing.T) {
+	t.Parallel()
+
+	timeout := taskExecutionTimeout(
+		model.Task{Type: model.TaskTypeTTS},
+		map[string]model.Task{
+			"segmentation": {
+				OutputRef: map[string]any{"segment_count": 2},
+			},
+		},
+		200*time.Second,
+		0,
+		200*time.Second,
+		30*time.Minute,
+	)
+	if timeout != 600*time.Second {
+		t.Fatalf("timeout = %s, want %s", timeout, 600*time.Second)
 	}
 }
 
@@ -85,6 +148,7 @@ func TestTaskExecutionTimeoutUsesConfiguredValueForVideo(t *testing.T) {
 		model.Task{Type: model.TaskTypeVideo},
 		map[string]model.Task{},
 		200*time.Second,
+		300*time.Second,
 		200*time.Second,
 		25*time.Minute,
 	)
@@ -100,6 +164,7 @@ func TestTaskExecutionTimeoutUsesDefaultForVideoWhenConfiguredValueInvalid(t *te
 		model.Task{Type: model.TaskTypeVideo},
 		map[string]model.Task{},
 		200*time.Second,
+		300*time.Second,
 		200*time.Second,
 		0,
 	)
@@ -122,6 +187,7 @@ func TestTaskExecutionTimeoutUsesRequestedVideoCountForShotVideo(t *testing.T) {
 			},
 		},
 		200*time.Second,
+		300*time.Second,
 		200*time.Second,
 		30*time.Minute,
 	)
@@ -144,6 +210,7 @@ func TestTaskExecutionTimeoutCapsShotVideoByShotImageCount(t *testing.T) {
 			},
 		},
 		200*time.Second,
+		300*time.Second,
 		180*time.Second,
 		30*time.Minute,
 	)
@@ -162,6 +229,7 @@ func TestTaskExecutionTimeoutUsesDefaultPerShotWhenConfiguredValueInvalid(t *tes
 		},
 		map[string]model.Task{},
 		200*time.Second,
+		300*time.Second,
 		0,
 		30*time.Minute,
 	)

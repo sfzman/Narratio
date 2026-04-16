@@ -162,6 +162,9 @@ func LoadRuntime() (*Runtime, error) {
 	schedulerService.SetScriptTimeoutPerSegment(
 		time.Duration(cfg.ScriptTimeoutPerSegmentSeconds) * time.Second,
 	)
+	schedulerService.SetTTSTimeoutPerSegment(
+		time.Duration(cfg.TTSTimeoutPerSegmentSeconds) * time.Second,
+	)
 	schedulerService.SetShotVideoTimeoutPerShot(
 		time.Duration(cfg.ShotVideoTimeoutPerShotSeconds) * time.Second,
 	)
@@ -201,6 +204,7 @@ func LoadRuntime() (*Runtime, error) {
 		"resource_video_gen_concurrency", cfg.ResourceVideoGenConcurrency,
 		"resource_video_render_concurrency", cfg.ResourceVideoRenderConcurrency,
 		"script_timeout_per_segment_seconds", cfg.ScriptTimeoutPerSegmentSeconds,
+		"tts_timeout_per_segment_seconds", cfg.TTSTimeoutPerSegmentSeconds,
 		"shot_video_timeout_per_shot_seconds", cfg.ShotVideoTimeoutPerShotSeconds,
 		"video_render_timeout_seconds", cfg.VideoRenderTimeoutSeconds,
 		"ffmpeg_startup_check_timeout_seconds", cfg.FFmpegStartupCheckTimeoutSeconds,

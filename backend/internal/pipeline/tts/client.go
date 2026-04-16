@@ -131,7 +131,7 @@ func (c *HTTPClient) Synthesize(ctx context.Context, request Request) ([]byte, e
 
 		httpResponse, err := c.httpClient.Do(httpRequest)
 		if err != nil {
-			sendErr := fmt.Errorf("send tts request: %w", err)
+			sendErr := wrapTTSSendError(ctx, c.httpClient.Timeout, err)
 			if retryErr := c.retryIfNeeded(ctx, request, endpoint, attempt, sendErr); retryErr != nil {
 				return nil, retryErr
 			}
@@ -298,6 +298,27 @@ func (c *HTTPClient) retryBackoff(attempt int) time.Duration {
 	}
 
 	return time.Duration(1<<attempt) * c.backoff
+}
+
+func wrapTTSSendError(
+	ctx context.Context,
+	httpTimeout time.Duration,
+	err error,
+) error {
+	timeoutDetail := ""
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		timeoutDetail = "task context deadline exceeded"
+	case strings.Contains(err.Error(), "Client.Timeout exceeded"):
+		timeoutDetail = fmt.Sprintf("http client timeout exceeded (%s)", httpTimeout)
+	case errors.Is(err, context.DeadlineExceeded):
+		timeoutDetail = "request deadline exceeded"
+	}
+	if timeoutDetail != "" {
+		return fmt.Errorf("send tts request (%s): %w", timeoutDetail, err)
+	}
+
+	return fmt.Errorf("send tts request: %w", err)
 }
 
 func parseRSAPrivateKey(value string) (*rsa.PrivateKey, error) {

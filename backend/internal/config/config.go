@@ -21,6 +21,7 @@ type Config struct {
 	ResourceVideoGenConcurrency        int
 	ResourceVideoRenderConcurrency     int
 	ScriptTimeoutPerSegmentSeconds     int
+	TTSTimeoutPerSegmentSeconds        int
 	VideoRenderTimeoutSeconds          int
 	ShotVideoTimeoutPerShotSeconds     int
 	FFmpegStartupCheckTimeoutSeconds   int
@@ -93,6 +94,7 @@ func Load() (*Config, error) {
 		ResourceVideoGenConcurrency:        envAsIntOrDefault("RESOURCE_VIDEO_GEN_CONCURRENCY", 1),
 		ResourceVideoRenderConcurrency:     envAsIntOrDefault("RESOURCE_VIDEO_RENDER_CONCURRENCY", 1),
 		ScriptTimeoutPerSegmentSeconds:     envAsIntOrDefault("SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS", 200),
+		TTSTimeoutPerSegmentSeconds:        envAsIntOrDefault("TTS_TIMEOUT_PER_SEGMENT_SECONDS", 300),
 		VideoRenderTimeoutSeconds:          envAsIntOrDefault("VIDEO_RENDER_TIMEOUT_SECONDS", 1800),
 		ShotVideoTimeoutPerShotSeconds:     envAsIntOrDefault("SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS", 200),
 		FFmpegStartupCheckTimeoutSeconds:   envAsIntOrDefault("FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS", 10),

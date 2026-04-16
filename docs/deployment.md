@@ -112,6 +112,7 @@ RESOURCE_IMAGE_GEN_CONCURRENCY=2
 RESOURCE_VIDEO_GEN_CONCURRENCY=1
 RESOURCE_VIDEO_RENDER_CONCURRENCY=1
 SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS=200
+TTS_TIMEOUT_PER_SEGMENT_SECONDS=300
 SHOT_VIDEO_TIMEOUT_PER_SHOT_SECONDS=200
 VIDEO_RENDER_TIMEOUT_SECONDS=1800
 FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS=10
@@ -276,6 +277,7 @@ curl -sS http://127.0.0.1:18080/api/v1/jobs/<job_id>/tasks
 - 若未同时配置 `TTS_API_BASE_URL` 与 `TTS_JWT_PRIVATE_KEY`，`tts` 仍然只会生成 `tts_manifest.json` 和占位 WAV；这是当前预期行为
 - 若同时配置了 `TTS_API_BASE_URL` 与 `TTS_JWT_PRIVATE_KEY`，runtime 会自动接入真实 TTS client；执行时会按 segment 文本内的句号逐句串行合成，再合并成 segment 级 WAV
 - 真实 TTS client 当前支持最小 retry/backoff；可通过 `TTS_MAX_RETRIES` 与 `TTS_RETRY_BACKOFF_SECONDS` 调整 timeout / `429` / `5xx` 的重试行为
+- `tts` task 当前不再使用固定总超时；scheduler 会按 `segment_count * TTS_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算 task deadline，适配不同文章段数
 
 ## 项目结构（完整）
 

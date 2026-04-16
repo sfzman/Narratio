@@ -265,7 +265,7 @@ type Shot struct {
 ```
 
 **调用服务**：DashScope 文本生成 API（OpenAI-compatible mode，承载 Qwen 文本模型）  
-**超时**：当前代码里文本 HTTP client timeout 为 600s；`script` task 的执行 deadline 现已按 `segment_count * SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 200 秒，其他 task 仍默认使用 12 分钟执行 deadline。后台 runner / 开发态手动 dispatch 的外层超时已放宽，不再比 `script` task 更早截断。  
+**超时**：当前代码里文本 HTTP client timeout 为 600s；`script` task 的执行 deadline 现已按 `segment_count * SCRIPT_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 200 秒，其他 task 仍默认使用固定 deadline。后台 runner / 开发态手动 dispatch 的外层超时已放宽，不再比 `script` task 更早截断。  
 **重试**：文档原先约定为最多 2 次，指数退避；当前代码尚未接入真实 retry/backoff  
 **Prompt 模板**：见 `internal/pipeline/script/prompt.go`
 
@@ -330,7 +330,7 @@ type SubtitleItem struct {
 
 **调用服务**：自部署 TTS API  
 **并发**：当前以串行生成为主；由于 TTS 服务性能限制，segment 内必须逐句串行请求  
-**超时**：单句请求超时由具体 TTS client 控制  
+**超时**：单句请求超时由具体 TTS client 通过 `TTS_REQUEST_TIMEOUT_SECONDS` 控制；整个 `tts` task 的执行 deadline 由 scheduler 按 `segment_count * TTS_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，默认每段 300 秒  
 **重试**：最多 3 次  
 **输出格式**：WAV，采样率 24000Hz
 

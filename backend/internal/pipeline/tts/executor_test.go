@@ -277,6 +277,9 @@ func TestExecutePersistsCompletedSegmentsBeforeLaterSegmentFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "synthesize segment 1") {
 		t.Fatalf("err = %v", err)
 	}
+	if !strings.Contains(err.Error(), "synthesize sentence 1/1") {
+		t.Fatalf("err = %v", err)
+	}
 
 	artifact := readTTSArtifact(t, workspaceDir, "jobs/job_tts_partial/audio/tts_manifest.json")
 	if len(artifact.AudioSegments) != 1 {
@@ -327,6 +330,9 @@ func TestExecuteReturnsClientError(t *testing.T) {
 		t.Fatal("Execute() error = nil, want error")
 	}
 	if !strings.Contains(err.Error(), "synthesize segment 0") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "synthesize sentence 1/2") {
 		t.Fatalf("err = %v", err)
 	}
 }

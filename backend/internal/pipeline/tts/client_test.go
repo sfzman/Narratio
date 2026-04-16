@@ -229,6 +229,78 @@ func TestHTTPClientSynthesizeStopsAfterRetryLimit(t *testing.T) {
 	}
 }
 
+func TestHTTPClientSynthesizeMarksTaskContextDeadlineExceeded(t *testing.T) {
+	t.Parallel()
+
+	privateKeyPEM := mustGenerateRSAPrivateKeyPEM(t)
+	client, err := NewHTTPClient(
+		"https://example.com",
+		privateKeyPEM,
+		300,
+		"male_calm",
+		"https://example.com/emotion.wav",
+		&http.Client{
+			Timeout: 3 * time.Second,
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}),
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHTTPClient() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err = client.Synthesize(ctx, Request{
+		Text:    "第一句。",
+		VoiceID: "male_calm",
+	})
+	if err == nil {
+		t.Fatal("Synthesize() error = nil, want deadline error")
+	}
+	if !strings.Contains(err.Error(), "task context deadline exceeded") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestHTTPClientSynthesizeMarksHTTPClientTimeoutExceeded(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(40 * time.Millisecond)
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write([]byte("RIFFfakeWAVE"))
+	}))
+	defer server.Close()
+
+	privateKeyPEM := mustGenerateRSAPrivateKeyPEM(t)
+	client, err := NewHTTPClient(
+		server.URL,
+		privateKeyPEM,
+		300,
+		"male_calm",
+		"https://example.com/emotion.wav",
+		&http.Client{Timeout: 20 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewHTTPClient() error = %v", err)
+	}
+
+	_, err = client.Synthesize(context.Background(), Request{
+		Text:    "第一句。",
+		VoiceID: "male_calm",
+	})
+	if err == nil {
+		t.Fatal("Synthesize() error = nil, want timeout error")
+	}
+	if !strings.Contains(err.Error(), "http client timeout exceeded") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestNewHTTPClientRequiresTimeout(t *testing.T) {
 	t.Parallel()
 

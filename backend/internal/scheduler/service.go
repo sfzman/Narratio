@@ -30,6 +30,7 @@ type Service struct {
 	resources               ResourceManager
 	clock                   Clock
 	scriptTimeoutPerSegment time.Duration
+	ttsTimeoutPerSegment    time.Duration
 	shotVideoTimeoutPerShot time.Duration
 	videoRenderTimeout      time.Duration
 	log                     *slog.Logger
@@ -48,6 +49,7 @@ func NewService(
 		resources:               resources,
 		clock:                   realClock{},
 		scriptTimeoutPerSegment: defaultScriptSegmentExecutionTimeout,
+		ttsTimeoutPerSegment:    defaultTTSSegmentExecutionTimeout,
 		shotVideoTimeoutPerShot: defaultShotVideoExecutionTimeoutPerShot,
 		videoRenderTimeout:      defaultVideoRenderExecutionTimeout,
 		log:                     slog.Default(),
@@ -59,6 +61,13 @@ func (s *Service) SetScriptTimeoutPerSegment(timeout time.Duration) {
 		return
 	}
 	s.scriptTimeoutPerSegment = timeout
+}
+
+func (s *Service) SetTTSTimeoutPerSegment(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	s.ttsTimeoutPerSegment = timeout
 }
 
 func (s *Service) SetVideoRenderTimeout(timeout time.Duration) {
@@ -190,6 +199,7 @@ func (s *Service) executePreparedDispatch(
 		enrichedSelected,
 		s.resources,
 		s.scriptTimeoutPerSegment,
+		s.ttsTimeoutPerSegment,
 		s.shotVideoTimeoutPerShot,
 		s.videoRenderTimeout,
 		results,
@@ -237,6 +247,7 @@ func (s *Service) executePreparedDispatch(
 			enrichedNext,
 			s.resources,
 			s.scriptTimeoutPerSegment,
+			s.ttsTimeoutPerSegment,
 			s.shotVideoTimeoutPerShot,
 			s.videoRenderTimeout,
 			results,

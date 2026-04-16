@@ -76,9 +76,10 @@ payload := map[string]any{
 
 **响应格式**：二进制音频数据流（`Content-Type: audio/wav`）
 
-**超时**：按单句请求控制，当前由 `TTS_REQUEST_TIMEOUT_SECONDS` 配置 HTTP client timeout  
+**超时**：当前分两层控制：单句 HTTP 请求超时由 `TTS_REQUEST_TIMEOUT_SECONDS` 配置；整个 `tts` task 的执行 deadline 由 scheduler 按 `segment_count * TTS_TIMEOUT_PER_SEGMENT_SECONDS` 动态计算，避免多段文章仍共用固定总时限  
 **并发**：当前目标实现要求句子级串行调用  
 **重试**：当前代码已接入最小 retry/backoff，配置项为 `TTS_MAX_RETRIES` 与 `TTS_RETRY_BACKOFF_SECONDS`；默认仅对 timeout、`429`、`5xx` 生效，重试 2 次，退避 `2s / 4s`
+**报错定位**：当前超时错误会尽量区分是 `task context deadline exceeded`（整个 `tts` task 预算耗尽）还是 `http client timeout exceeded`（单句请求超过 `TTS_REQUEST_TIMEOUT_SECONDS`）
 
 **健康检查 Endpoint**：`${TTS_API_BASE_URL}/health`（GET，用于启动时检查）
 
@@ -308,6 +309,7 @@ TTS_API_BASE_URL=https://your-tts-service.com
 TTS_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 TTS_JWT_EXPIRE_SECONDS=300
 TTS_REQUEST_TIMEOUT_SECONDS=300
+TTS_TIMEOUT_PER_SEGMENT_SECONDS=300
 TTS_MAX_RETRIES=2
 TTS_RETRY_BACKOFF_SECONDS=2
 TTS_DEFAULT_VOICE_ID=male_calm
