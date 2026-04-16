@@ -23,7 +23,7 @@ func (h Handlers) retryTask(c *gin.Context) {
 			failure(c, http.StatusNotFound, 1002, "任务不存在")
 			return
 		case errors.Is(err, jobapp.ErrTaskRetryNotAllowed):
-			failure(c, http.StatusConflict, 1004, "任务当前状态不允许该操作")
+			failure(c, http.StatusConflict, 1004, "仅 failed 任务可重试，且当前 job 不能有 running 任务")
 			return
 		default:
 			failure(c, http.StatusInternalServerError, 5003, "重试任务失败")

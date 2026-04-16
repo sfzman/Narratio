@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultTaskExecutionTimeout             = 12 * time.Minute
+	defaultTaskExecutionTimeout             = 20 * time.Minute
 	defaultScriptSegmentExecutionTimeout    = 200 * time.Second
 	defaultShotVideoExecutionTimeoutPerShot = 200 * time.Second
 	defaultVideoRenderExecutionTimeout      = 30 * time.Minute
