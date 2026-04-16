@@ -50,6 +50,8 @@ var narratioEnvKeys = []string{
 	"TTS_JWT_PRIVATE_KEY",
 	"TTS_JWT_EXPIRE_SECONDS",
 	"TTS_REQUEST_TIMEOUT_SECONDS",
+	"TTS_MAX_RETRIES",
+	"TTS_RETRY_BACKOFF_SECONDS",
 	"TTS_DEFAULT_VOICE_ID",
 	"TTS_EMOTION_PROMPT",
 }
@@ -156,6 +158,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.TTSRequestTimeoutSeconds != 300 {
 		t.Fatalf("TTSRequestTimeoutSeconds = %d", cfg.TTSRequestTimeoutSeconds)
+	}
+	if cfg.TTSMaxRetries != 2 {
+		t.Fatalf("TTSMaxRetries = %d", cfg.TTSMaxRetries)
+	}
+	if cfg.TTSRetryBackoffSeconds != 2 {
+		t.Fatalf("TTSRetryBackoffSeconds = %d", cfg.TTSRetryBackoffSeconds)
 	}
 	if cfg.TTSJWTExpireSeconds != 300 {
 		t.Fatalf("TTSJWTExpireSeconds = %d", cfg.TTSJWTExpireSeconds)
@@ -500,6 +508,26 @@ func TestLoadFallsBackWhenDashScopeTextRetryConfigInvalid(t *testing.T) {
 	}
 }
 
+func TestLoadFallsBackWhenTTSRetryConfigInvalid(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("TTS_MAX_RETRIES", "-1")
+	t.Setenv("TTS_RETRY_BACKOFF_SECONDS", "bad")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.TTSMaxRetries != 2 {
+		t.Fatalf("TTSMaxRetries = %d, want 2", cfg.TTSMaxRetries)
+	}
+	if cfg.TTSRetryBackoffSeconds != 2 {
+		t.Fatalf("TTSRetryBackoffSeconds = %d, want 2", cfg.TTSRetryBackoffSeconds)
+	}
+}
+
 func TestLoadFallsBackWhenResourceConcurrencyInvalid(t *testing.T) {
 	t.Setenv("DATABASE_DRIVER", "sqlite")
 	t.Setenv("DATABASE_DSN", "./narratio.db")
@@ -613,6 +641,26 @@ func TestLoadReadsTTSEmotionPrompt(t *testing.T) {
 
 	if cfg.TTSEmotionPrompt != "https://example.com/custom-emotion.wav" {
 		t.Fatalf("TTSEmotionPrompt = %q", cfg.TTSEmotionPrompt)
+	}
+}
+
+func TestLoadReadsTTSRetryConfig(t *testing.T) {
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_DSN", "./narratio.db")
+	t.Setenv("WORKSPACE_DIR", "./workspace")
+	t.Setenv("TTS_MAX_RETRIES", "4")
+	t.Setenv("TTS_RETRY_BACKOFF_SECONDS", "5")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.TTSMaxRetries != 4 {
+		t.Fatalf("TTSMaxRetries = %d, want 4", cfg.TTSMaxRetries)
+	}
+	if cfg.TTSRetryBackoffSeconds != 5 {
+		t.Fatalf("TTSRetryBackoffSeconds = %d, want 5", cfg.TTSRetryBackoffSeconds)
 	}
 }
 

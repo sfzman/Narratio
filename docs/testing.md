@@ -70,7 +70,8 @@ func TestScriptRun(t *testing.T) {
 - [ ] 并发 3 个 segment 同时合成
 - [ ] TTS 服务超时（60s），返回 error
 - [ ] 返回空文件（size=0），视为失败
-- [ ] 重试 3 次后仍失败
+- [ ] `429` / `5xx` 触发退避重试
+- [ ] 达到 `TTS_MAX_RETRIES` 上限后仍失败
 
 ### pipeline/image
 - [ ] 正常流程：提交 → 轮询 → 下载图片

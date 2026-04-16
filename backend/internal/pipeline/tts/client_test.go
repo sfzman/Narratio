@@ -16,6 +16,12 @@ import (
 	"time"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
 func TestHTTPClientSynthesizeBuildsNarrationRequest(t *testing.T) {
 	t.Parallel()
 
@@ -64,11 +70,8 @@ func TestHTTPClientSynthesizeBuildsNarrationRequest(t *testing.T) {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
 	claims := decodeBearerTokenClaims(t, authHeader)
-	if claims["iat"] == 0 {
-		t.Fatalf("jwt iat = %#v, want non-zero", claims["iat"])
-	}
-	if claims["exp"] <= claims["iat"] {
-		t.Fatalf("jwt exp = %d, iat = %d", claims["exp"], claims["iat"])
+	if claims["exp"] == 0 {
+		t.Fatalf("jwt exp = %#v, want non-zero", claims["exp"])
 	}
 	if string(audioBytes) != "RIFFfakeWAVE" {
 		t.Fatalf("audioBytes = %q", string(audioBytes))
@@ -122,6 +125,107 @@ func TestHTTPClientSynthesizeFallsBackToDefaultVoicePreset(t *testing.T) {
 	}
 	if received["reference_audio"] != "https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/%E7%94%B7_%E6%AD%A3%E5%A4%AA.wav" {
 		t.Fatalf("payload.reference_audio = %#v", received["reference_audio"])
+	}
+}
+
+func TestHTTPClientSynthesizeRetriesRetryableStatus(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(w, "upstream busy", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write([]byte("RIFFfakeWAVE"))
+	}))
+	defer server.Close()
+
+	sleepCalls := make([]time.Duration, 0, 2)
+	privateKeyPEM := mustGenerateRSAPrivateKeyPEM(t)
+	client, err := NewHTTPClient(
+		server.URL,
+		privateKeyPEM,
+		300,
+		"male_calm",
+		"https://example.com/emotion.wav",
+		&http.Client{Timeout: 3 * time.Second},
+		HTTPClientOptions{
+			MaxRetries: 2,
+			Backoff:    time.Second,
+			Sleep: func(_ context.Context, duration time.Duration) error {
+				sleepCalls = append(sleepCalls, duration)
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHTTPClient() error = %v", err)
+	}
+
+	audioBytes, err := client.Synthesize(context.Background(), Request{
+		Text:    "第一句。",
+		VoiceID: "male_calm",
+	})
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if string(audioBytes) != "RIFFfakeWAVE" {
+		t.Fatalf("audioBytes = %q", string(audioBytes))
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if len(sleepCalls) != 2 || sleepCalls[0] != time.Second || sleepCalls[1] != 2*time.Second {
+		t.Fatalf("sleepCalls = %#v, want [1s 2s]", sleepCalls)
+	}
+}
+
+func TestHTTPClientSynthesizeStopsAfterRetryLimit(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	privateKeyPEM := mustGenerateRSAPrivateKeyPEM(t)
+	client, err := NewHTTPClient(
+		"https://example.com",
+		privateKeyPEM,
+		300,
+		"male_calm",
+		"https://example.com/emotion.wav",
+		&http.Client{
+			Timeout: 3 * time.Second,
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				attempts++
+				return nil, context.DeadlineExceeded
+			}),
+		},
+		HTTPClientOptions{
+			MaxRetries: 2,
+			Backoff:    time.Second,
+			Sleep: func(_ context.Context, duration time.Duration) error {
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHTTPClient() error = %v", err)
+	}
+
+	_, err = client.Synthesize(context.Background(), Request{
+		Text:    "第一句。",
+		VoiceID: "male_calm",
+	})
+	if err == nil {
+		t.Fatal("Synthesize() error = nil, want timeout error")
+	}
+	if !strings.Contains(err.Error(), "send tts request") {
+		t.Fatalf("err = %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
 	}
 }
 

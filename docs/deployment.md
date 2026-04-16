@@ -98,6 +98,8 @@ TTS_API_BASE_URL=https://your-tts-service.com
 TTS_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 TTS_JWT_EXPIRE_SECONDS=300
 TTS_REQUEST_TIMEOUT_SECONDS=300
+TTS_MAX_RETRIES=2
+TTS_RETRY_BACKOFF_SECONDS=2
 TTS_DEFAULT_VOICE_ID=male_calm
 TTS_EMOTION_PROMPT=https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/male-read-emo.wav
 
@@ -273,6 +275,7 @@ curl -sS http://127.0.0.1:18080/api/v1/jobs/<job_id>/tasks
 - 如果后续要继续做 `shot_video` 真实联调，至少再确认 `image_manifest.json.shot_images[*]` 里的 `segment_index / shot_index / file_path / prompt` 都稳定存在；`source_image_url` 有则更好，但不是硬前置
 - 若未同时配置 `TTS_API_BASE_URL` 与 `TTS_JWT_PRIVATE_KEY`，`tts` 仍然只会生成 `tts_manifest.json` 和占位 WAV；这是当前预期行为
 - 若同时配置了 `TTS_API_BASE_URL` 与 `TTS_JWT_PRIVATE_KEY`，runtime 会自动接入真实 TTS client；执行时会按 segment 文本内的句号逐句串行合成，再合并成 segment 级 WAV
+- 真实 TTS client 当前支持最小 retry/backoff；可通过 `TTS_MAX_RETRIES` 与 `TTS_RETRY_BACKOFF_SECONDS` 调整 timeout / `429` / `5xx` 的重试行为
 
 ## 项目结构（完整）
 

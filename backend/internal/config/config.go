@@ -50,6 +50,8 @@ type Config struct {
 	DashScopeVideoImageMinJPEGQuality  int
 	TTSBaseURL                         string
 	TTSRequestTimeoutSeconds           int
+	TTSMaxRetries                      int
+	TTSRetryBackoffSeconds             int
 	TTSJWTPrivateKey                   string
 	TTSJWTExpireSeconds                int
 	TTSDefaultVoiceID                  string
@@ -120,6 +122,8 @@ func Load() (*Config, error) {
 		DashScopeVideoImageMinJPEGQuality:  envAsIntOrDefault("DASHSCOPE_VIDEO_IMAGE_MIN_JPEG_QUALITY", 45),
 		TTSBaseURL:                         env("TTS_API_BASE_URL"),
 		TTSRequestTimeoutSeconds:           envAsIntOrDefault("TTS_REQUEST_TIMEOUT_SECONDS", 300),
+		TTSMaxRetries:                      envAsIntOrDefault("TTS_MAX_RETRIES", 2),
+		TTSRetryBackoffSeconds:             envAsIntOrDefault("TTS_RETRY_BACKOFF_SECONDS", 2),
 		TTSJWTPrivateKey:                   env("TTS_JWT_PRIVATE_KEY"),
 		TTSJWTExpireSeconds:                envAsIntOrDefault("TTS_JWT_EXPIRE_SECONDS", 300),
 		TTSDefaultVoiceID:                  envOrDefault("TTS_DEFAULT_VOICE_ID", "male_calm"),

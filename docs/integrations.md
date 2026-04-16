@@ -63,7 +63,7 @@ payload := map[string]any{
 **当前 Go 代码状态**：配置了 `TTS_API_BASE_URL` 和 `TTS_JWT_PRIVATE_KEY` 后，后端会自动使用下面这套 live 接口形态；否则继续走 placeholder。  
 **Endpoint**：`${TTS_API_BASE_URL}/api/v1/tts`（参考原 Python `narration_tools.py`）
 
-**认证**：`Authorization: Bearer <jwt>`，JWT 由后端使用 `TTS_JWT_PRIVATE_KEY` 按 RS256 签名生成，payload 至少包含 `iat` 和 `exp`
+**认证**：`Authorization: Bearer <jwt>`，JWT 由后端使用 `TTS_JWT_PRIVATE_KEY` 按 RS256 签名生成；当前 payload 稳定包含 `exp`，`iat` 目前刻意不传，避免和部分服务端时钟偏差触发校验失败
 
 **请求格式**
 ```json
@@ -78,7 +78,7 @@ payload := map[string]any{
 
 **超时**：按单句请求控制，当前由 `TTS_REQUEST_TIMEOUT_SECONDS` 配置 HTTP client timeout  
 **并发**：当前目标实现要求句子级串行调用  
-**重试**：待补
+**重试**：当前代码已接入最小 retry/backoff，配置项为 `TTS_MAX_RETRIES` 与 `TTS_RETRY_BACKOFF_SECONDS`；默认仅对 timeout、`429`、`5xx` 生效，重试 2 次，退避 `2s / 4s`
 
 **健康检查 Endpoint**：`${TTS_API_BASE_URL}/health`（GET，用于启动时检查）
 
@@ -308,6 +308,8 @@ TTS_API_BASE_URL=https://your-tts-service.com
 TTS_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 TTS_JWT_EXPIRE_SECONDS=300
 TTS_REQUEST_TIMEOUT_SECONDS=300
+TTS_MAX_RETRIES=2
+TTS_RETRY_BACKOFF_SECONDS=2
 TTS_DEFAULT_VOICE_ID=male_calm
 TTS_EMOTION_PROMPT=https://oneclicktoon.kongyuxingx.cn/cdn/oneclicktoon/male-read-emo.wav
 

@@ -11,8 +11,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -41,6 +44,15 @@ type HTTPClient struct {
 	defaultVoiceID string
 	emotionPrompt  string
 	voicePresets   []model.VoicePreset
+	maxRetries     int
+	backoff        time.Duration
+	sleep          func(context.Context, time.Duration) error
+}
+
+type HTTPClientOptions struct {
+	MaxRetries int
+	Backoff    time.Duration
+	Sleep      func(context.Context, time.Duration) error
 }
 
 func NewHTTPClient(
@@ -50,6 +62,7 @@ func NewHTTPClient(
 	defaultVoiceID string,
 	emotionPrompt string,
 	httpClient *http.Client,
+	options ...HTTPClientOptions,
 ) (*HTTPClient, error) {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
@@ -72,6 +85,18 @@ func NewHTTPClient(
 		return nil, fmt.Errorf("tts jwt expire seconds must be positive")
 	}
 
+	opts := HTTPClientOptions{
+		MaxRetries: 0,
+		Backoff:    0,
+		Sleep:      sleepWithContext,
+	}
+	if len(options) > 0 {
+		opts = options[0]
+		if opts.Sleep == nil {
+			opts.Sleep = sleepWithContext
+		}
+	}
+
 	return &HTTPClient{
 		baseURL:        parsed,
 		privateKey:     privateKey,
@@ -80,6 +105,9 @@ func NewHTTPClient(
 		defaultVoiceID: strings.TrimSpace(defaultVoiceID),
 		emotionPrompt:  strings.TrimSpace(emotionPrompt),
 		voicePresets:   defaultVoicePresets(),
+		maxRetries:     maxInt(opts.MaxRetries, 0),
+		backoff:        opts.Backoff,
+		sleep:          opts.Sleep,
 	}, nil
 }
 
@@ -94,45 +122,43 @@ func (c *HTTPClient) Synthesize(ctx context.Context, request Request) ([]byte, e
 		return nil, fmt.Errorf("marshal tts request: %w", err)
 	}
 
-	httpRequest, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		c.endpointURL(),
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("build tts request: %w", err)
-	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "audio/wav")
-	token, err := c.buildBearerToken()
-	if err != nil {
-		return nil, err
-	}
-	httpRequest.Header.Set("Authorization", "Bearer "+token)
+	endpoint := c.endpointURL()
+	for attempt := 0; ; attempt++ {
+		httpRequest, err := c.newRequest(ctx, endpoint, body)
+		if err != nil {
+			return nil, err
+		}
 
-	httpResponse, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		return nil, fmt.Errorf("send tts request: %w", err)
-	}
-	defer httpResponse.Body.Close()
+		httpResponse, err := c.httpClient.Do(httpRequest)
+		if err != nil {
+			sendErr := fmt.Errorf("send tts request: %w", err)
+			if retryErr := c.retryIfNeeded(ctx, request, endpoint, attempt, sendErr); retryErr != nil {
+				return nil, retryErr
+			}
+			continue
+		}
 
-	audioBytes, err := io.ReadAll(httpResponse.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read tts response: %w", err)
-	}
-	if httpResponse.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf(
-			"tts request failed: status=%d body=%s",
-			httpResponse.StatusCode,
-			strings.TrimSpace(string(audioBytes)),
-		)
-	}
-	if len(audioBytes) == 0 {
-		return nil, fmt.Errorf("tts response is empty")
-	}
+		audioBytes, readErr := io.ReadAll(httpResponse.Body)
+		httpResponse.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read tts response: %w", readErr)
+		}
+		if httpResponse.StatusCode >= http.StatusBadRequest {
+			statusErr := &StatusError{
+				StatusCode: httpResponse.StatusCode,
+				Body:       strings.TrimSpace(string(audioBytes)),
+			}
+			if retryErr := c.retryIfNeeded(ctx, request, endpoint, attempt, statusErr); retryErr != nil {
+				return nil, retryErr
+			}
+			continue
+		}
+		if len(audioBytes) == 0 {
+			return nil, fmt.Errorf("tts response is empty")
+		}
 
-	return audioBytes, nil
+		return audioBytes, nil
+	}
 }
 
 func (c *HTTPClient) buildPayload(request Request) (map[string]any, error) {
@@ -213,6 +239,67 @@ func (c *HTTPClient) endpointURL() string {
 	return endpoint.String()
 }
 
+func (c *HTTPClient) newRequest(
+	ctx context.Context,
+	endpoint string,
+	body []byte,
+) (*http.Request, error) {
+	httpRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build tts request: %w", err)
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "audio/wav")
+	token, err := c.buildBearerToken()
+	if err != nil {
+		return nil, err
+	}
+	httpRequest.Header.Set("Authorization", "Bearer "+token)
+
+	return httpRequest, nil
+}
+
+func (c *HTTPClient) retryIfNeeded(
+	ctx context.Context,
+	request Request,
+	endpoint string,
+	attempt int,
+	err error,
+) error {
+	if !isRetryableTTSError(err) || attempt >= c.maxRetries {
+		return err
+	}
+
+	backoff := c.retryBackoff(attempt)
+	slog.Warn("tts request retry scheduled",
+		"url", endpoint,
+		"voice_id", request.VoiceID,
+		"text_length", len([]rune(request.Text)),
+		"attempt", attempt+1,
+		"next_attempt", attempt+2,
+		"backoff_ms", backoff.Milliseconds(),
+		"error", err,
+	)
+	if sleepErr := c.sleep(ctx, backoff); sleepErr != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *HTTPClient) retryBackoff(attempt int) time.Duration {
+	if c.backoff <= 0 {
+		return 0
+	}
+
+	return time.Duration(1<<attempt) * c.backoff
+}
+
 func parseRSAPrivateKey(value string) (*rsa.PrivateKey, error) {
 	normalized := strings.TrimSpace(strings.ReplaceAll(value, "\\n", "\n"))
 	if normalized == "" {
@@ -244,4 +331,83 @@ func base64RawURL(value []byte) string {
 
 func defaultVoicePresets() []model.VoicePreset {
 	return model.DefaultVoicePresets()
+}
+
+type StatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *StatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("tts request failed with status %d", e.StatusCode)
+	}
+
+	return fmt.Sprintf("tts request failed with status %d: %s", e.StatusCode, e.Body)
+}
+
+func (e *StatusError) Retryable() bool {
+	return IsRetryableStatus(e.StatusCode)
+}
+
+func IsRetryableStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func isRetryableTTSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Retryable()
+	}
+
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func sleepWithContext(ctx context.Context, duration time.Duration) error {
+	if duration <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func maxInt(value int, floor int) int {
+	if value < floor {
+		return floor
+	}
+
+	return value
 }

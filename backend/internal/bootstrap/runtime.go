@@ -217,6 +217,10 @@ func LoadRuntime() (*Runtime, error) {
 		"dashscope_image_model", cfg.DashScopeImageModel,
 		"dashscope_video_base_url", cfg.DashScopeVideoBaseURL,
 		"dashscope_video_model", cfg.DashScopeVideoModel,
+		"tts_base_url", cfg.TTSBaseURL,
+		"tts_request_timeout_seconds", cfg.TTSRequestTimeoutSeconds,
+		"tts_max_retries", cfg.TTSMaxRetries,
+		"tts_retry_backoff_seconds", cfg.TTSRetryBackoffSeconds,
 	)
 
 	return &Runtime{
@@ -433,6 +437,10 @@ func buildTTSClient(cfg *config.Config) (ttspipeline.Client, error) {
 		cfg.TTSDefaultVoiceID,
 		cfg.TTSEmotionPrompt,
 		&http.Client{Timeout: time.Duration(cfg.TTSRequestTimeoutSeconds) * time.Second},
+		ttspipeline.HTTPClientOptions{
+			MaxRetries: cfg.TTSMaxRetries,
+			Backoff:    time.Duration(cfg.TTSRetryBackoffSeconds) * time.Second,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build tts client: %w", err)
