@@ -119,6 +119,20 @@ FFMPEG_STARTUP_CHECK_TIMEOUT_SECONDS=10
 SHOT_VIDEO_DEFAULT_DURATION_SECONDS=3
 ```
 
+图像接口 base URL 这里有一个容易踩的坑：
+
+- 官方 DashScope 原生图片接口使用 `https://dashscope.aliyuncs.com/api/v1`
+- 如果接的是 Token Plan 图片代理，也要填它的原生图片入口：`https://token-plan.cn-beijing.maas.aliyuncs.com/api/v1`
+- 不要把文本模型常用的 `.../compatible-mode/v1` 直接复用给 `DASHSCOPE_IMAGE_BASE_URL`
+- 当前后端图片 client 会自动再拼 `/services/aigc/multimodal-generation/generation`；如果 base URL 配成 compatible-mode，最终请求地址就会错误
+
+一个可工作的 Token Plan 图片配置示例：
+
+```env
+DASHSCOPE_IMAGE_BASE_URL=https://token-plan.cn-beijing.maas.aliyuncs.com/api/v1
+DASHSCOPE_IMAGE_MODEL=wan2.7-image
+```
+
 当前代码状态：
 
 - `cmd/server` 目前已完成配置读取、SQLite store 初始化、`segmentation / outline / character_sheet / script / character_image / tts / image / shot_video / video` executor registry 初始化，以及 `app/jobs` / `scheduler.Service` 组装

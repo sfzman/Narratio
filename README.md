@@ -13,10 +13,10 @@
 
 优先阅读：
 
-- [AGENTS.md](/Users/fangzhou/Workspace/qufafa/Narratio/AGENTS.md)
-- [docs/job-lifecycle.md](/Users/fangzhou/Workspace/qufafa/Narratio/docs/job-lifecycle.md)
-- [docs/pipeline.md](/Users/fangzhou/Workspace/qufafa/Narratio/docs/pipeline.md)
-- [docs/api-spec.md](/Users/fangzhou/Workspace/qufafa/Narratio/docs/api-spec.md)
+- [AGENTS.md](./AGENTS.md)
+- [docs/job-lifecycle.md](./docs/job-lifecycle.md)
+- [docs/pipeline.md](./docs/pipeline.md)
+- [docs/api-spec.md](./docs/api-spec.md)
 
 当前技术方向：
 
